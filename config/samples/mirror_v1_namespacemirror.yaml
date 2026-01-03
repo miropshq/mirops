@@ -1,0 +1,9 @@
+apiVersion: mirror.mirror.dev/v1
+kind: NamespaceMirror
+metadata:
+  labels:
+    app.kubernetes.io/name: liveim
+    app.kubernetes.io/managed-by: kustomize
+  name: namespacemirror-sample
+spec:
+  # TODO(user): Add fields here
