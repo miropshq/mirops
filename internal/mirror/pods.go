@@ -49,8 +49,21 @@ func (p *PodMirrorImpl) MirrorPod(ctx context.Context, name, sourceNS, targetNS 
 
 	err = p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: targetNS}, existing)
 	if err == nil {
+		if 	existing.DeletionTimestamp != nil {
+			fmt.Printf("[mirror][pod] Pod %s is terminating in %s, skipping creation\n", name, targetNS)
+			return nil
+		}
 		fmt.Printf("[mirror][pod] Deleting existing pod: %s\n", name)
-		_ = p.K8sClient.Delete(ctx, existing)
+		if delErr := p.K8sClient.Delete(ctx, existing); delErr != nil {
+			return fmt.Errorf("failed to delete existing pod %s: %w", name, delErr)
+		}
+		fmt.Printf("[mirror][pod] Pod %s deleted, will recreate on next sync\n", name)
+		return nil
+		//_ = p.K8sClient.Delete(ctx, existing)
+	}
+
+	if client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("error checking existing pod: %w", err)
 	}
 
 	err = p.K8sClient.Create(ctx, dst)
