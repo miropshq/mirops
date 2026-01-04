@@ -5,6 +5,12 @@ on:
         branches:
             - development
 
+permissions:
+  contents: read # needed to write releases
+ # id-token: write # needed for keyless signing
+  packages: write # needed for ghcr access
+  #issues: write
+
 jobs:
     Build:
         name: Run on Ubuntu
@@ -23,8 +29,8 @@ jobs:
               uses: docker/login-action@v3
               with:
                   registry: ghcr.io
-                  username: ${{ secrets.REGISTRY_USERNAME }}
-                  password: ${{ secrets.REGISTRY_PAT }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate code
               run: make generate
