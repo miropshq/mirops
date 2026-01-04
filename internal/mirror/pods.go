@@ -21,62 +21,49 @@ func NewPodMirror(k8sClient client.Client) PodMirrorI {
 
 func (p *PodMirrorImpl) MirrorPod(ctx context.Context, name, sourceNS, targetNS string) error {
 	fmt.Printf("[mirror][pod] Mirroring: %s from %s to %s\n", name, sourceNS, targetNS)
-	src := &corev1.Pod{}
 
-	err := p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: sourceNS}, src)
-	if err != nil {
-		return fmt.Errorf("failed to get pod %s/%s: %w", sourceNS, name, err)
+	// Buscar el pod fuente
+	src := &corev1.Pod{}
+	if err := p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: sourceNS}, src); err != nil {
+		return fmt.Errorf("failed to get source pod %s/%s: %w", sourceNS, name, err)
 	}
 
-	dst := src.DeepCopy()
+	// Revisar si ya existe en el target
+	existing := &corev1.Pod{}
+	err := p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: targetNS}, existing)
+	if err == nil {
+		fmt.Printf("[mirror][pod] Pod %s already exists in %s, skipping\n", name, targetNS)
+		return nil // Ya existe → no hacemos nada
+	}
 
+	if client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("error checking target pod %s/%s: %w", targetNS, name, err)
+	}
+
+	// Crear copia del pod
+	dst := src.DeepCopy()
 	dst.ResourceVersion = ""
 	dst.UID = ""
 	dst.SelfLink = ""
 	dst.CreationTimestamp = metav1.Time{}
 	dst.ManagedFields = nil
-	dst.Namespace = targetNS
 	dst.OwnerReferences = nil
 	dst.Status = corev1.PodStatus{}
 	dst.Finalizers = nil
+	dst.Namespace = targetNS
 	dst.Spec.NodeName = ""
 	dst.Spec.Hostname = ""
 	dst.Spec.Subdomain = ""
 
-	// Pods cannot be updated → only recreate
-	existing := &corev1.Pod{}
-	//err := p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: targetNS}, existing)
-
-	err = p.K8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: targetNS}, existing)
-	if err == nil {
-		if 	existing.DeletionTimestamp != nil {
-			fmt.Printf("[mirror][pod] Pod %s is terminating in %s, skipping creation\n", name, targetNS)
-			return nil
-		}
-		fmt.Printf("[mirror][pod] Deleting existing pod: %s\n", name)
-		if delErr := p.K8sClient.Delete(ctx, existing); delErr != nil {
-			return fmt.Errorf("failed to delete existing pod %s: %w", name, delErr)
-		}
-		fmt.Printf("[mirror][pod] Pod %s deleted, will recreate on next sync\n", name)
-		return nil
-		//_ = p.K8sClient.Delete(ctx, existing)
-	}
-
-	if client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("error checking existing pod: %w", err)
-	}
-
-	err = p.K8sClient.Create(ctx, dst)
-	if err != nil {
+	if err := p.K8sClient.Create(ctx, dst); err != nil {
 		fmt.Printf("[mirror][pod] Error creating pod: %s\n", err)
 		return err
 	}
 
 	fmt.Printf("[mirror][pod] Created: %s in %s\n", name, targetNS)
 	return nil
-
-	// return p.K8sClient.Create(ctx, dst)
 }
+
 
 func (p *PodMirrorImpl) ListPods(ctx context.Context, namespace string) ([]string, error) {
 	list := &corev1.PodList{}
