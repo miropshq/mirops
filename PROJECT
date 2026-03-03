@@ -3,19 +3,19 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.10.0
-domain: mirror.dev
+domain: mirops.io
 layout:
 - go.kubebuilder.io/v4
-projectName: liveim
-repo: github.com/liveim/liveim
+projectName: mirops
+repo: github.com/miropshq/mirops
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: mirror.dev
-  group: mirror
-  kind: NamespaceMirror
-  path: github.com/liveim/liveim/api/v1
+  domain: mirops.io
+  group: mirops
+  kind: UpgradeAnalysis
+  path: github.com/miropshq/mirops/api/v1
   version: v1
 version: "3"

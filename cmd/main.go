@@ -1,5 +1,5 @@
 /*
-Copyright 2025.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,14 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	//mine
-	//"context"
-	//"time"
-
-	mirrorv1 "github.com/liveim/liveim/api/v1"
-	//"github.com/liveim/liveim/internal/controller"
-	controllers "github.com/liveim/liveim/controllers"
-	//"github.com/liveim/liveim/internal/mirror"
+	miropsv1 "github.com/miropshq/mirops/api/v1"
+	"github.com/miropshq/mirops/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -54,7 +48,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(mirrorv1.AddToScheme(scheme))
+	utilruntime.Must(miropsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -68,10 +62,6 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	//ENV VARS for mirroring namespace
-	// sourceNS := os.Getenv("SOURCE_NAMESPACE")
-	// targetNS := os.Getenv("TARGET_NAMESPACE")
-
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -96,11 +86,6 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	// if sourceNS == "" || targetNS == "" {
-	// 	setupLog.Info("WARNING: SOURCE_NAMESPACE or TARGET_NAMESPACE not set. Mirror will not run until configured.")
-
-	// }
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -175,7 +160,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "59a6607b.mirror.dev",
+		LeaderElectionID:       "54114436.mirops.io",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -193,11 +178,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controllers.NamespaceMirrorReconciler{
+	if err := (&controller.UpgradeAnalysisReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "NamespaceMirror")
+		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -210,143 +195,6 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
-
-	// === MIRROR LOOP (GOROUTINE) ===
-	// go func() {
-	// 	ticker := time.NewTicker(30 * time.Second)
-	// 	defer ticker.Stop()
-
-	// 	ctx := context.Background()
-
-	// 	k8sClient := mgr.GetClient()
-	// 	secretMirror := mirror.NewSecretMirror(k8sClient)
-	// 	cmMirror := mirror.NewConfigMapMirror(k8sClient)
-	// 	deploymentMirror := mirror.NewDeploymentMirror(k8sClient)
-	// 	svcMirror := mirror.NewServiceMirror(k8sClient)
-	// 	replicasetMirror := mirror.NewReplicaSetMirror(k8sClient)
-	// 	podMirror := mirror.NewPodMirror(k8sClient)
-	// 	nsMirror := mirror.NewNamespaceMirror(secretMirror, cmMirror, deploymentMirror, svcMirror, replicasetMirror, podMirror)
-
-	// 	for range ticker.C {
-	// 		if sourceNS == "" || targetNS == "" {
-	// 			setupLog.Info("Mirror skipped: namespace env vars not set")
-	// 			continue
-	// 		}
-
-	// 		// setupLog.Info("Starting secret mirror", "source", sourceNS, "target", targetNS)
-
-	// 		// // List ALL secrets (because secrets == empty)
-	// 		// secrets, err := secretMirror.ListSecrets(ctx, sourceNS)
-	// 		// if err != nil {
-	// 		// 	setupLog.Error(err, "Failed to list secrets")
-	// 		// 	continue
-	// 		// }
-
-	// 		// // Mirror secrets
-	// 		// if err := nsMirror.MirrorNamespaceSecrets(ctx, sourceNS, targetNS, secrets); err != nil {
-	// 		// 	setupLog.Error(err, "Failed to mirror secrets")
-	// 		// } else {
-	// 		// 	setupLog.Info("Mirror completed", "count", len(secrets))
-	// 		// }
-
-	// 		// ============================
-	// 		// SECRETS
-	// 		// ============================
-	// 		setupLog.Info("Starting secret mirror", "source", sourceNS, "target", targetNS)
-
-	// 		secrets, err := secretMirror.ListSecrets(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list secrets")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespaceSecrets(ctx, sourceNS, targetNS, secrets); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror secrets")
-	// 			} else {
-	// 				setupLog.Info("Secrets mirror completed", "count", len(secrets))
-	// 			}
-	// 		}
-
-	// 		// ============================
-	// 		// CONFIGMAPS
-	// 		// ============================
-	// 		setupLog.Info("Starting configmap mirror", "source", sourceNS, "target", targetNS)
-
-	// 		cms, err := cmMirror.ListConfigMaps(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list configmaps")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespaceConfigMaps(ctx, sourceNS, targetNS, cms); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror configmaps")
-	// 			} else {
-	// 				setupLog.Info("ConfigMaps mirror completed", "count", len(cms))
-	// 			}
-	// 		}
-
-	// 		// ============================
-	// 		// DEPLOYMENTS
-	// 		// ============================
-
-	// 		setupLog.Info("Starting deployments mirror", "source", sourceNS, "target", targetNS)
-	// 		deployments, err := deploymentMirror.ListDeployments(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list deployments")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespaceDeployments(ctx, sourceNS, targetNS, deployments); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror deployments")
-	// 			} else {
-	// 				setupLog.Info("Deployments mirror completed", "count", len(deployments))
-	// 			}
-	// 		}
-
-	// 		// ============================
-	// 		// SERVICES
-	// 		// ============================
-	// 		setupLog.Info("Starting services mirror", "source", sourceNS, "target", targetNS)
-
-	// 		services, err := svcMirror.ListServices(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list services")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespaceServices(ctx, sourceNS, targetNS, services); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror services")
-	// 			} else {
-	// 				setupLog.Info("Services mirror completed", "count", len(services))
-	// 			}
-	// 		}
-
-	// 		// ============================
-	// 		// REPLICA SETS
-	// 		// ============================
-	// 		setupLog.Info("Starting standalone replica sets mirror", "source", sourceNS, "target", targetNS)
-
-	// 		replicasets, err := replicasetMirror.ListReplicaSets(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list standalone replica sets")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespaceReplicaSets(ctx, sourceNS, targetNS, replicasets); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror standalone replica sets")
-	// 			} else {
-	// 				setupLog.Info("Standalone replica sets mirror completed", "count", len(replicasets))
-	// 			}
-	// 		}
-
-	// 		// ============================
-	// 		// PODS
-	// 		// ============================
-	// 		setupLog.Info("Starting standalone pods mirror", "source", sourceNS, "target", targetNS)
-
-	// 		pods, err := podMirror.ListPods(ctx, sourceNS)
-	// 		if err != nil {
-	// 			setupLog.Error(err, "Failed to list standalone pods")
-	// 		} else {
-	// 			if err := nsMirror.MirrorNamespacePods(ctx, sourceNS, targetNS, pods); err != nil {
-	// 				setupLog.Error(err, "Failed to mirror standalone pods")
-	// 			} else {
-	// 				setupLog.Info("Standalone pods mirror completed", "count", len(pods))
-	// 			}
-	// 		}
-
-	// 	}
-	// }()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
