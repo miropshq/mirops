@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
-	"github.com/miropshq/mirops/internal/controller"
+	"github.com/miropshq/mirops/internal/collector"
 	// +kubebuilder:scaffold:imports
 )
 
