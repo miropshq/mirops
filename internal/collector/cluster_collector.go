@@ -7,6 +7,7 @@ import (
 	discovery "k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type DefaultClusterCollector struct {
