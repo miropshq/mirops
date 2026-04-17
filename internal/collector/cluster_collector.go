@@ -11,51 +11,51 @@ import (
 )
 
 type DefaultClusterCollector struct {
-	Client client.Client
-	WorkloadCollectors []WorkloadCollector
+       Client client.Client
+       WorkloadCollectors []WorkloadCollector
 }
 
 func NewClusterCollector(c client.Client) ClusterCollectorI {
-	return DefaultClusterCollector {
-		Client: c,
-		WorkloadCollector: []WorkloadCollector{
-			NewDeploymentCollector(c),
-		},
-	}
+       return &DefaultClusterCollector{
+	       Client: c,
+	       WorkloadCollectors: []WorkloadCollector{
+		       NewDeploymentCollector(c),
+	       },
+       }
 }
 
-func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot, error){
-	snapshot := &ClusterSnapshot{}
+func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot, error) {
+       snapshot := &ClusterSnapshot{}
 
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return nil, err
-	}
+       cfg, err := config.GetConfig()
+       if err != nil {
+	       return nil, err
+       }
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	version, err := discoverClient.ServerVersion()
-	if err != nil {
-		return nil, err
-	}
+       discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
+       if err != nil {
+	       return nil, err
+       }
+       version, err := discoveryClient.ServerVersion()
+       if err != nil {
+	       return nil, err
+       }
 
-	snapshot.ClusterVersion = version.GitVersion
+       snapshot.ClusterVersion = version.GitVersion
 
-	nsList := &corev1.NamespaceList{}
-	if err := c.Client.List(ctx, nsList); err != nil {
-		return nil, err
-	}
+       nsList := &corev1.NamespaceList{}
+       if err := c.Client.List(ctx, nsList); err != nil {
+	       return nil, err
+       }
 
-	snapshot.NamespaceCount = len(nsList.Items)
+       snapshot.NamespaceCount = len(nsList.Items)
 
-	for _, wc := range c.WorkloadCollector {
-		resources, err := wc.Collect(ctx)
-		if err != nil {
-			return nil, err
-		}
-		snapshot.Resources = append(snapshot.Resources, resources...)
-	}
-	return snapshot, nil
+       for _, wc := range c.WorkloadCollectors {
+	       resources, err := wc.Collect(ctx)
+	       if err != nil {
+		       return nil, err
+	       }
+	       snapshot.Resources = append(snapshot.Resources, resources...)
+       }
+       return snapshot, nil
 }
