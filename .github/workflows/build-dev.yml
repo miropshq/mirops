@@ -1,4 +1,4 @@
-name: Build mirror image
+name: Build mirops image
 
 on:
     push:
