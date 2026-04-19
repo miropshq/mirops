@@ -7,4 +7,3 @@ import (
 type WorkloadCollector interface {
 	Collect(ctx context.Context) ([]ResourceRef, error)
 }
-

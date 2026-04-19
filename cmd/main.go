@@ -25,6 +25,8 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	miropsv1 "github.com/miropshq/mirops/api/v1"
+	"github.com/miropshq/mirops/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -34,10 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
-	 "github.com/miropshq/mirops/controllers"
-	miropsv1 "github.com/miropshq/mirops/api/v1"
 	//"github.com/miropshq/mirops/internal/collector"
-	
 	// +kubebuilder:scaffold:imports
 )
 
@@ -179,7 +178,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.UpgradeAnalysisReconciler{
+	if err := (&controllers.UpgradeAnalysisReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {

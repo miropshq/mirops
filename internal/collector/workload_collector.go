@@ -2,8 +2,8 @@ package collector
 
 import (
 	"context"
-"sigs.k8s.io/controller-runtime/pkg/client"
-appsv1 "k8s.io/api/apps/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type DeploymentCollector struct {
@@ -11,24 +11,24 @@ type DeploymentCollector struct {
 }
 
 func (d *DeploymentCollector) Collect(ctx context.Context) ([]ResourceRef, error) {
-       list := &appsv1.DeploymentList{}
-       if err := d.Client.List(ctx, list); err != nil {
-	       return nil, err
-       }
+	list := &appsv1.DeploymentList{}
+	if err := d.Client.List(ctx, list); err != nil {
+		return nil, err
+	}
 
-       var result []ResourceRef
+	var result []ResourceRef
 
-       for _, item := range list.Items {
-	       result = append(result, ResourceRef{
-		       Namespace:  item.Namespace,
-		       Name:       item.Name,
-		       APIVersion: "apps/v1",
-		       Kind:       "Deployment",
-	       })
-       }
-       return result, nil
+	for _, item := range list.Items {
+		result = append(result, ResourceRef{
+			Namespace:  item.Namespace,
+			Name:       item.Name,
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+		})
+	}
+	return result, nil
 }
 
 func NewDeploymentCollector(c client.Client) WorkloadCollector {
-       return &DeploymentCollector{Client: c}
+	return &DeploymentCollector{Client: c}
 }
