@@ -41,6 +41,9 @@ jobs:
             - name: Build binary
               run: make build
 
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
             - name: Docker meta
               id: meta
               uses: docker/metadata-action@v5
@@ -50,14 +53,8 @@ jobs:
                     type=sha,format=short
                     type=raw,value=dev
 
-            - name: Build image (make)
+            - name: Build and push multi-arch image
               run: |
                 echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
-                    make docker-build IMG="$tag"
-                done
-
-            - name: Push images
-              run: |
-                echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
-                    docker push "$tag"
+                    make docker-buildx IMG="$tag"
                 done
