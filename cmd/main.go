@@ -34,9 +34,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
-
+	 "github.com/miropshq/mirops/controllers"
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	//"github.com/miropshq/mirops/internal/collector"
+	
 	// +kubebuilder:scaffold:imports
 )
 
