@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
+	"github.com/miropshq/mirops/internal/collector"
 )
 
 // UpgradeAnalysisReconciler reconciles a UpgradeAnalysis object
@@ -50,8 +51,18 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	log.Info("Reconciling UpgradeAnalysis", "name", upgradeAnalysis.Name, "namespace", upgradeAnalysis.Namespace)
 
-	// TODO: Implement your reconciliation logic here
-	// This is where you add the business logic for handling UpgradeAnalysis resources
+	clusterCollector := collector.NewClusterCollector(r.Client)
+	snapshot, err := clusterCollector.Collect(ctx)
+	if err != nil {
+		log.Error(err, "failed to collect cluster snapshot")
+		return ctrl.Result{}, err
+	}
+
+	log.Info("Cluster snapshot collected",
+		"clusterVersion", snapshot.ClusterVersion,
+		"namespaceCount", snapshot.NamespaceCount,
+		"resourceCount", len(snapshot.Resources),
+	)
 
 	return ctrl.Result{}, nil
 }

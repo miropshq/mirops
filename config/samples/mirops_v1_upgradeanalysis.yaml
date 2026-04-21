@@ -1,9 +1,6 @@
 apiVersion: mirops.mirops.io/v1
 kind: UpgradeAnalysis
 metadata:
-  labels:
-    app.kubernetes.io/name: mirops
-    app.kubernetes.io/managed-by: kustomize
   name: upgradeanalysis-sample
-spec:
-  # TODO(user): Add fields here
+  namespace: mirops
+spec: {}
