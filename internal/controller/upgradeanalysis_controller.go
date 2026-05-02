@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/collector"
@@ -35,13 +35,13 @@ type UpgradeAnalysisReconciler struct {
 	Collector collector.ClusterCollector
 }
 
-//+kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/finalizers,verbs=update
 
 // Reconcile implements the reconciliation loop for UpgradeAnalysis
 func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	// Fetch the UpgradeAnalysis instance
 	upgradeAnalysis := &miropsv1.UpgradeAnalysis{}
