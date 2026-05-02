@@ -112,4 +112,3 @@ func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&miropsv1.UpgradeAnalysis{}).
 		Complete(r)
 }
-

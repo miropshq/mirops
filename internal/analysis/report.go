@@ -3,29 +3,29 @@ package analysis
 // Report is the full JSON output written to the source destination
 // and consumed by mirops-cli via --source flag.
 type Report struct {
-	GeneratedAt   string     `json:"generatedAt"`
-	Cluster       string     `json:"cluster"`
-	ClusterVersion string    `json:"clusterVersion"`
-	TargetVersion string     `json:"targetVersion"`
-	Scores        Scores     `json:"scores"`
-	Metrics       Metrics    `json:"metrics"`
-	Conditions    Conditions `json:"conditions"`
-	Decision      Decision   `json:"decision"`
-	Reason        string     `json:"reason"`
+	GeneratedAt    string     `json:"generatedAt"`
+	Cluster        string     `json:"cluster"`
+	ClusterVersion string     `json:"clusterVersion"`
+	TargetVersion  string     `json:"targetVersion"`
+	Scores         Scores     `json:"scores"`
+	Metrics        Metrics    `json:"metrics"`
+	Conditions     Conditions `json:"conditions"`
+	Decision       Decision   `json:"decision"`
+	Reason         string     `json:"reason"`
 }
 
 type Scores struct {
-	Total    int `json:"total"`
-	Health   int `json:"health"`
-	Capacity int `json:"capacity"`
+	Total     int `json:"total"`
+	Health    int `json:"health"`
+	Capacity  int `json:"capacity"`
 	Stability int `json:"stability"`
-	Risk     int `json:"risk"`
+	Risk      int `json:"risk"`
 }
 
 type Metrics struct {
-	Pods          PodMetrics          `json:"pods"`
-	Resources     ResourceMetrics     `json:"resources"`
-	Stability     StabilityMetrics    `json:"stability"`
+	Pods          PodMetrics           `json:"pods"`
+	Resources     ResourceMetrics      `json:"resources"`
+	Stability     StabilityMetrics     `json:"stability"`
 	Compatibility CompatibilityMetrics `json:"compatibility"`
 }
 
@@ -51,10 +51,10 @@ type CompatibilityMetrics struct {
 }
 
 type Conditions struct {
-	PDBBlocking         bool `json:"pdbBlocking"`
-	HighCPUPressure     bool `json:"highCpuPressure"`
-	HighMemoryPressure  bool `json:"highMemoryPressure"`
-	UnstableCluster     bool `json:"unstableCluster"`
+	PDBBlocking        bool `json:"pdbBlocking"`
+	HighCPUPressure    bool `json:"highCpuPressure"`
+	HighMemoryPressure bool `json:"highMemoryPressure"`
+	UnstableCluster    bool `json:"unstableCluster"`
 }
 
 type Decision struct {

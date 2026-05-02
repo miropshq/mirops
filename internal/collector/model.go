@@ -14,15 +14,15 @@ type ClusterSnapshot struct {
 	Resources      []ResourceRef
 
 	// Pod health
-	TotalPods    int
-	NotReadyPods int
+	TotalPods     int
+	NotReadyPods  int
 	TotalRestarts int
 
 	// Capacity (CPU/Mem requests vs node capacity)
-	CPURequests  float64
-	CPUCapacity  float64
-	MemRequests  float64
-	MemCapacity  float64
+	CPURequests float64
+	CPUCapacity float64
+	MemRequests float64
+	MemCapacity float64
 
 	// Stability (compared to previous snapshot)
 	PreviousTotalPods int
