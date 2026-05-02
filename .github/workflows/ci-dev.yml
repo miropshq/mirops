@@ -1,0 +1,82 @@
+name: CI - Development (lint, test, build, push :dev)
+
+on:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ─── CI ────────────────────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate code
+        run: make generate
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Build binary
+        run: make build
+
+  # ─── Push dev image ────────────────────────────────────────────────────────────
+  push-dev:
+    name: Push dev image
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Login to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate code
+        run: make generate
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=dev
+
+      - name: Build and push multi-arch image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            make docker-buildx IMG="$tag"
+          done
