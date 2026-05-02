@@ -6,17 +6,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 type DefaultClusterCollector struct {
 	Client             client.Client
+	DiscoveryClient    discovery.DiscoveryInterface
 	WorkloadCollectors []WorkloadCollector
 }
 
-func NewClusterCollector(c client.Client) ClusterCollectorI {
+func NewClusterCollector(c client.Client, dc discovery.DiscoveryInterface) ClusterCollector {
 	return &DefaultClusterCollector{
-		Client: c,
+		Client:          c,
+		DiscoveryClient: dc,
 		WorkloadCollectors: []WorkloadCollector{
 			NewDeploymentCollector(c),
 		},
@@ -26,27 +27,16 @@ func NewClusterCollector(c client.Client) ClusterCollectorI {
 func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot, error) {
 	snapshot := &ClusterSnapshot{}
 
-	cfg, err := config.GetConfig()
+	version, err := c.DiscoveryClient.ServerVersion()
 	if err != nil {
 		return nil, err
 	}
-
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	version, err := discoveryClient.ServerVersion()
-	if err != nil {
-		return nil, err
-	}
-
 	snapshot.ClusterVersion = version.GitVersion
 
 	nsList := &corev1.NamespaceList{}
 	if err := c.Client.List(ctx, nsList); err != nil {
 		return nil, err
 	}
-
 	snapshot.NamespaceCount = len(nsList.Items)
 
 	for _, wc := range c.WorkloadCollectors {

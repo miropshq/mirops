@@ -26,9 +26,11 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
-	"github.com/miropshq/mirops/controllers"
+	"github.com/miropshq/mirops/internal/collector"
+	"github.com/miropshq/mirops/internal/controller"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	discoveryclient "k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -36,7 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
-	//"github.com/miropshq/mirops/internal/collector"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -154,7 +155,9 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -178,9 +181,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controllers.UpgradeAnalysisReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	dc, err := discoveryclient.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create discovery client")
+		os.Exit(1)
+	}
+	clusterCollector := collector.NewClusterCollector(mgr.GetClient(), dc)
+
+	if err := (&controller.UpgradeAnalysisReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Collector: clusterCollector,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
 		os.Exit(1)

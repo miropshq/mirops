@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -30,8 +30,9 @@ import (
 
 // UpgradeAnalysisReconciler reconciles a UpgradeAnalysis object
 type UpgradeAnalysisReconciler struct {
-	Client client.Client
-	Scheme *runtime.Scheme
+	Client    client.Client
+	Scheme    *runtime.Scheme
+	Collector collector.ClusterCollector
 }
 
 //+kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
@@ -51,8 +52,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	log.Info("Reconciling UpgradeAnalysis", "name", upgradeAnalysis.Name, "namespace", upgradeAnalysis.Namespace)
 
-	clusterCollector := collector.NewClusterCollector(r.Client)
-	snapshot, err := clusterCollector.Collect(ctx)
+	snapshot, err := r.Collector.Collect(ctx)
 	if err != nil {
 		log.Error(err, "failed to collect cluster snapshot")
 		return ctrl.Result{}, err

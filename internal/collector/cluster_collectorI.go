@@ -4,6 +4,6 @@ import (
 	"context"
 )
 
-type ClusterCollectorI interface {
+type ClusterCollector interface {
 	Collect(ctx context.Context) (*ClusterSnapshot, error)
 }
