@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+
 	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -16,8 +17,7 @@ func (d *DeploymentCollector) Collect(ctx context.Context) ([]ResourceRef, error
 		return nil, err
 	}
 
-	var result []ResourceRef
-
+	result := make([]ResourceRef, 0, len(list.Items))
 	for _, item := range list.Items {
 		result = append(result, ResourceRef{
 			Namespace:  item.Namespace,

@@ -1,0 +1,2 @@
+ignore:
+  - DL3006  # builder stage uses floating tag intentionally (golang:1.24)
