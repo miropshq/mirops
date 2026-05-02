@@ -91,22 +91,22 @@ func calcHealth(m Metrics) int {
 	notReadyRatio := float64(m.Pods.NotReady) / float64(nonZeroInt(m.Pods.Total))
 	restartRatio := float64(m.Pods.Restarts) / float64(nonZeroInt(m.Pods.Total))
 	score := 25 - (notReadyRatio * 100 * 0.2) - (restartRatio * 100 * 0.1)
-	return clamp(int(score), 0, 25)
+	return clamp(int(score), 25)
 }
 
 func calcCapacity(m Metrics) int {
 	score := 30 - (m.Resources.CPUPressure * 30) - (m.Resources.MemoryPressure * 30)
-	return clamp(int(score), 0, 30)
+	return clamp(int(score), 30)
 }
 
 func calcStability(m Metrics) int {
 	score := 20 - (m.Stability.PodDelta * 100 * 0.1) - (float64(m.Stability.RestartDelta) * 0.5)
-	return clamp(int(score), 0, 20)
+	return clamp(int(score), 20)
 }
 
 func calcRisk(m Metrics) int {
 	score := 25 - float64(m.Compatibility.DeprecatedAPIs*5) - float64(m.Compatibility.AddonIssues*10)
-	return clamp(int(score), 0, 25)
+	return clamp(int(score), 25)
 }
 
 func decide(total int, c Conditions) (string, bool) {
@@ -159,9 +159,9 @@ func abs(v float64) float64 {
 	return v
 }
 
-func clamp(v, min, max int) int {
-	if v < min {
-		return min
+func clamp(v, max int) int {
+	if v < 0 {
+		return 0
 	}
 	if v > max {
 		return max
