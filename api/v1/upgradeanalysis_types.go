@@ -23,43 +23,73 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// SourceType defines where the analysis report will be written
+// +kubebuilder:validation:Enum=file;s3;blob
+type SourceType string
+
+const (
+	SourceTypeFile SourceType = "file"
+	SourceTypeS3   SourceType = "s3"
+	SourceTypeBlob SourceType = "blob"
+)
+
+// SourceConfig defines the output destination for the analysis report
+type SourceConfig struct {
+	// type is the storage backend for the report: file, s3, or blob
+	// +kubebuilder:default=file
+	Type SourceType `json:"type"`
+
+	// path is the file path when type is "file"
+	// +optional
+	Path string `json:"path,omitempty"`
+}
+
 // UpgradeAnalysisSpec defines the desired state of UpgradeAnalysis
 type UpgradeAnalysisSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// targetVersion is the Kubernetes version to upgrade to (e.g. "1.29")
+	// +required
+	TargetVersion string `json:"targetVersion"`
 
-	// foo is an example field of UpgradeAnalysis. Edit upgradeanalysis_types.go to remove/update
+	// source defines where the analysis report will be written
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Source SourceConfig `json:"source,omitempty"`
 }
 
 // UpgradeAnalysisStatus defines the observed state of UpgradeAnalysis.
 type UpgradeAnalysisStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the UpgradeAnalysis resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// decision is the result of the analysis: SAFE, WARNING, or BLOCK
+	// +optional
+	Decision string `json:"decision,omitempty"`
+
+	// totalScore is the computed upgrade readiness score (0-100)
+	// +optional
+	TotalScore int `json:"totalScore,omitempty"`
+
+	// reason is a human-readable explanation of the decision
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// lastAnalysisTime is when the last analysis was performed
+	// +optional
+	LastAnalysisTime *metav1.Time `json:"lastAnalysisTime,omitempty"`
+
+	// reportPath is where the JSON report was written
+	// +optional
+	ReportPath string `json:"reportPath,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Target Version",type=string,JSONPath=`.spec.targetVersion`
+// +kubebuilder:printcolumn:name="Decision",type=string,JSONPath=`.status.decision`
+// +kubebuilder:printcolumn:name="Score",type=integer,JSONPath=`.status.totalScore`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // UpgradeAnalysis is the Schema for the upgradeanalyses API
 type UpgradeAnalysis struct {
