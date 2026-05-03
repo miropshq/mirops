@@ -128,7 +128,7 @@ func decide(total int, c Conditions) (string, bool) {
 }
 
 func buildIssues(snap *collector.ClusterSnapshot) []string {
-	var issues []string
+	issues := make([]string, 0, len(snap.PodIssues)+len(snap.NodeIssues)+len(snap.PDBIssues))
 	for _, p := range snap.PodIssues {
 		issues = append(issues, fmt.Sprintf("pod %s/%s: %s (restarts: %d)", p.Namespace, p.Name, p.Reason, p.Restarts))
 	}
