@@ -24,7 +24,7 @@ func NewClusterCollector(c client.Client, dc discovery.DiscoveryInterface) Clust
 	}
 }
 
-func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot, error) {
+func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*ClusterSnapshot, error) {
 	snapshot := &ClusterSnapshot{}
 
 	version, err := c.DiscoveryClient.ServerVersion()
@@ -39,6 +39,45 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot
 	}
 	snapshot.NamespaceCount = len(nsList.Items)
 
+	// Build exclusion set
+	excluded := make(map[string]bool)
+	for _, ns := range scope.ExcludeNamespaces {
+		excluded[ns] = true
+	}
+	if scope.Mode == "application" {
+		for ns := range systemNamespaces {
+			excluded[ns] = true
+		}
+	}
+
+	// Collect pods across all (non-excluded) namespaces
+	podList := &corev1.PodList{}
+	if err := c.Client.List(ctx, podList); err != nil {
+		return nil, err
+	}
+	for _, pod := range podList.Items {
+		if excluded[pod.Namespace] {
+			continue
+		}
+		snapshot.TotalPods++
+		restarts := 0
+		for _, cs := range pod.Status.ContainerStatuses {
+			restarts += int(cs.RestartCount)
+		}
+		snapshot.TotalRestarts += restarts
+
+		if !isPodReady(&pod) {
+			snapshot.NotReadyPods++
+			reason := podNotReadyReason(&pod)
+			snapshot.PodIssues = append(snapshot.PodIssues, PodIssue{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+				Reason:    reason,
+				Restarts:  restarts,
+			})
+		}
+	}
+
 	for _, wc := range c.WorkloadCollectors {
 		resources, err := wc.Collect(ctx)
 		if err != nil {
@@ -47,4 +86,25 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context) (*ClusterSnapshot
 		snapshot.Resources = append(snapshot.Resources, resources...)
 	}
 	return snapshot, nil
+}
+
+func isPodReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func podNotReadyReason(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+			return cs.State.Waiting.Reason
+		}
+	}
+	if pod.Status.Phase != "" {
+		return string(pod.Status.Phase)
+	}
+	return "NotReady"
 }

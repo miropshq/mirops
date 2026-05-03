@@ -33,6 +33,30 @@ const (
 	SourceTypeBlob SourceType = "blob"
 )
 
+// ScopeMode defines which namespaces are included in the analysis
+// +kubebuilder:validation:Enum=all;application
+type ScopeMode string
+
+const (
+	// ScopeModeAll includes every namespace (system + application)
+	ScopeModeAll ScopeMode = "all"
+	// ScopeModeApplication includes only non-system namespaces
+	ScopeModeApplication ScopeMode = "application"
+)
+
+// ScopeConfig controls which namespaces are analysed
+type ScopeConfig struct {
+	// mode controls which namespaces are included.
+	// "all" includes system and application namespaces (default).
+	// "application" excludes kube-system and other system namespaces.
+	// +kubebuilder:default=all
+	Mode ScopeMode `json:"mode"`
+
+	// excludeNamespaces is an optional list of additional namespaces to skip.
+	// +optional
+	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
+}
+
 // SourceConfig defines the output destination for the analysis report
 type SourceConfig struct {
 	// type is the storage backend for the report: file, s3, or blob
@@ -49,6 +73,11 @@ type UpgradeAnalysisSpec struct {
 	// targetVersion is the Kubernetes version to upgrade to (e.g. "1.29")
 	// +required
 	TargetVersion string `json:"targetVersion"`
+
+	// scope controls which namespaces are included in the analysis.
+	// Defaults to "all" (system + application namespaces).
+	// +optional
+	Scope ScopeConfig `json:"scope,omitempty"`
 
 	// source defines where the analysis report will be written
 	// +optional
