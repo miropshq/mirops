@@ -12,6 +12,7 @@ type Report struct {
 	Conditions     Conditions `json:"conditions"`
 	Decision       Decision   `json:"decision"`
 	Reason         string     `json:"reason"`
+	Issues         []string   `json:"issues,omitempty"`
 }
 
 type Scores struct {

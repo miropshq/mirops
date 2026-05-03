@@ -1,6 +1,11 @@
 package analysis
 
-import "github.com/miropshq/mirops/internal/collector"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/miropshq/mirops/internal/collector"
+)
 
 const (
 	scoreThreshold = 70
@@ -34,6 +39,8 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 
 	level, allow := decide(total, c)
 
+	issues := buildIssues(snap)
+
 	return &Report{
 		Cluster:        snap.ClusterName,
 		ClusterVersion: snap.ClusterVersion,
@@ -52,7 +59,8 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 			Allow:     allow,
 			Level:     level,
 		},
-		Reason: buildReason(level, c, m),
+		Reason: buildReason(level, c, m, snap),
+		Issues: issues,
 	}
 }
 
@@ -119,18 +127,43 @@ func decide(total int, c Conditions) (string, bool) {
 	return levelSafe, true
 }
 
-func buildReason(level string, c Conditions, m Metrics) string {
+func buildIssues(snap *collector.ClusterSnapshot) []string {
+	issues := make([]string, 0, len(snap.PodIssues)+len(snap.NodeIssues)+len(snap.PDBIssues))
+	for _, p := range snap.PodIssues {
+		issues = append(issues, fmt.Sprintf("pod %s/%s: %s (restarts: %d)", p.Namespace, p.Name, p.Reason, p.Restarts))
+	}
+	for _, n := range snap.NodeIssues {
+		issues = append(issues, fmt.Sprintf("node %s: %s", n.Name, n.Reason))
+	}
+	for _, pdb := range snap.PDBIssues {
+		issues = append(issues, fmt.Sprintf("pdb %s/%s: would block drain", pdb.Namespace, pdb.Name))
+	}
+	return issues
+}
+
+func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterSnapshot) string {
 	if c.PDBBlocking {
+		if len(snap.PDBIssues) > 0 {
+			p := snap.PDBIssues[0]
+			return fmt.Sprintf("Blocked by PodDisruptionBudget %s/%s", p.Namespace, p.Name)
+		}
 		return "Blocked by PodDisruptionBudget"
 	}
 	if c.HighCPUPressure {
-		return "High CPU pressure detected"
+		return fmt.Sprintf("High CPU pressure detected (%.0f%% of capacity)", m.Resources.CPUPressure*100)
 	}
 	if c.HighMemoryPressure {
-		return "High memory pressure detected"
+		return fmt.Sprintf("High memory pressure detected (%.0f%% of capacity)", m.Resources.MemoryPressure*100)
+	}
+	if c.UnstableCluster && len(snap.PodIssues) > 0 {
+		msgs := make([]string, 0, len(snap.PodIssues))
+		for _, p := range snap.PodIssues {
+			msgs = append(msgs, fmt.Sprintf("%s/%s (%s)", p.Namespace, p.Name, p.Reason))
+		}
+		return fmt.Sprintf("%d pod(s) not ready: %s", len(snap.PodIssues), strings.Join(msgs, ", "))
 	}
 	if m.Compatibility.DeprecatedAPIs > 0 || m.Compatibility.AddonIssues > 0 {
-		return "Moderate risk due to resource pressure and deprecated APIs"
+		return fmt.Sprintf("Risk detected: %d deprecated API(s), %d addon issue(s)", m.Compatibility.DeprecatedAPIs, m.Compatibility.AddonIssues)
 	}
 	if level == levelSafe {
 		return "Cluster is ready for upgrade"

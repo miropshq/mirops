@@ -42,6 +42,8 @@ type UpgradeAnalysisReconciler struct {
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // Reconcile implements the reconciliation loop for UpgradeAnalysis
 func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -56,7 +58,14 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	log.Info("Reconciling UpgradeAnalysis", "name", ua.Name, "namespace", ua.Namespace)
 
 	// Collect cluster snapshot
-	snapshot, err := r.Collector.Collect(ctx)
+	scope := collector.Scope{
+		Mode:              string(ua.Spec.Scope.Mode),
+		ExcludeNamespaces: ua.Spec.Scope.ExcludeNamespaces,
+	}
+	if scope.Mode == "" {
+		scope.Mode = "all"
+	}
+	snapshot, err := r.Collector.Collect(ctx, scope)
 	if err != nil {
 		log.Error(err, "failed to collect cluster snapshot")
 		return ctrl.Result{}, err
