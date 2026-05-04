@@ -99,9 +99,20 @@ func isPodReady(pod *corev1.Pod) bool {
 
 func podNotReadyReason(pod *corev1.Pod) string {
 	for _, cs := range pod.Status.ContainerStatuses {
+		// Waiting state: CrashLoopBackOff, ImagePullBackOff, etc.
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			return cs.State.Waiting.Reason
 		}
+		// Between restarts: container is Terminated but will restart (CrashLoopBackOff)
+		if cs.State.Terminated != nil && cs.State.Terminated.Reason != "" {
+			if cs.RestartCount > 0 {
+				return "CrashLoopBackOff"
+			}
+			return cs.State.Terminated.Reason
+		}
+	}
+	if pod.Status.Phase == corev1.PodRunning {
+		return "ReadinessProbeFailed"
 	}
 	if pod.Status.Phase != "" {
 		return string(pod.Status.Phase)
