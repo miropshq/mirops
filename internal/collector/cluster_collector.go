@@ -282,27 +282,27 @@ func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[
 // deprecatedAPIRemovedIn maps group/version combinations to the k8s version
 // that removes them. Extend as needed for future deprecations.
 var deprecatedAPIRemovedIn = map[string]string{
-	"extensions/v1beta1/ingresses":                "1.22",
-	"networking.k8s.io/v1beta1/ingresses":         "1.22",
-	"extensions/v1beta1/networkpolicies":          "1.16",
-	"extensions/v1beta1/deployments":              "1.16",
-	"extensions/v1beta1/replicasets":              "1.16",
-	"extensions/v1beta1/daemonsets":               "1.16",
-	"rbac.authorization.k8s.io/v1alpha1/roles":    "1.29",
-	"rbac.authorization.k8s.io/v1beta1/roles":     "1.22",
-	"storage.k8s.io/v1beta1/csidrivers":           "1.22",
-	"storage.k8s.io/v1beta1/storageclasses":       "1.22",
-	"policy/v1beta1/poddisruptionbudgets":         "1.25",
-	"policy/v1beta1/podsecuritypolicies":          "1.25",
-	"autoscaling/v2beta1/horizontalpodautoscalers": "1.26",
-	"autoscaling/v2beta2/horizontalpodautoscalers": "1.26",
+	"extensions/v1beta1/ingresses":                     "1.22",
+	"networking.k8s.io/v1beta1/ingresses":              "1.22",
+	"extensions/v1beta1/networkpolicies":               "1.16",
+	"extensions/v1beta1/deployments":                   "1.16",
+	"extensions/v1beta1/replicasets":                   "1.16",
+	"extensions/v1beta1/daemonsets":                    "1.16",
+	"rbac.authorization.k8s.io/v1alpha1/roles":         "1.29",
+	"rbac.authorization.k8s.io/v1beta1/roles":          "1.22",
+	"storage.k8s.io/v1beta1/csidrivers":                "1.22",
+	"storage.k8s.io/v1beta1/storageclasses":            "1.22",
+	"policy/v1beta1/poddisruptionbudgets":              "1.25",
+	"policy/v1beta1/podsecuritypolicies":               "1.25",
+	"autoscaling/v2beta1/horizontalpodautoscalers":     "1.26",
+	"autoscaling/v2beta2/horizontalpodautoscalers":     "1.26",
 	"flowcontrol.apiserver.k8s.io/v1beta1/flowschemas": "1.29",
 	"flowcontrol.apiserver.k8s.io/v1beta2/flowschemas": "1.29",
 }
 
 // detectDeprecatedAPIs checks which API group/versions the cluster actually has
 // registered against the known deprecation list.
-func (c *DefaultClusterCollector) detectDeprecatedAPIs(ctx context.Context, snapshot *ClusterSnapshot) error {
+func (c *DefaultClusterCollector) detectDeprecatedAPIs(_ context.Context, snapshot *ClusterSnapshot) error {
 	_, apiLists, err := c.DiscoveryClient.ServerGroupsAndResources()
 	if err != nil {
 		// Non-fatal: partial results are still useful

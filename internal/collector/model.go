@@ -29,8 +29,8 @@ type PDBIssue struct {
 
 // StatefulSetIssue describes a StatefulSet that is not fully ready
 type StatefulSetIssue struct {
-	Namespace   string
-	Name        string
+	Namespace     string
+	Name          string
 	ReadyReplicas int32
 	TotalReplicas int32
 }
