@@ -128,7 +128,9 @@ func decide(total int, c Conditions) (string, bool) {
 }
 
 func buildIssues(snap *collector.ClusterSnapshot) []string {
-	issues := make([]string, 0, len(snap.PodIssues)+len(snap.NodeIssues)+len(snap.PDBIssues))
+	total := len(snap.PodIssues) + len(snap.NodeIssues) + len(snap.PDBIssues) +
+		len(snap.StatefulSetIssues) + len(snap.DaemonSetIssues) + len(snap.JobIssues) + len(snap.DeprecatedAPIList)
+	issues := make([]string, 0, total)
 	for _, p := range snap.PodIssues {
 		issues = append(issues, fmt.Sprintf("pod %s/%s: %s (restarts: %d)", p.Namespace, p.Name, p.Reason, p.Restarts))
 	}
@@ -137,6 +139,18 @@ func buildIssues(snap *collector.ClusterSnapshot) []string {
 	}
 	for _, pdb := range snap.PDBIssues {
 		issues = append(issues, fmt.Sprintf("pdb %s/%s: would block drain", pdb.Namespace, pdb.Name))
+	}
+	for _, ss := range snap.StatefulSetIssues {
+		issues = append(issues, fmt.Sprintf("statefulset %s/%s: %d/%d replicas ready", ss.Namespace, ss.Name, ss.ReadyReplicas, ss.TotalReplicas))
+	}
+	for _, ds := range snap.DaemonSetIssues {
+		issues = append(issues, fmt.Sprintf("daemonset %s/%s: %d pod(s) unavailable", ds.Namespace, ds.Name, ds.NumberUnavailable))
+	}
+	for _, j := range snap.JobIssues {
+		issues = append(issues, fmt.Sprintf("job %s/%s: %d active pod(s) may be interrupted", j.Namespace, j.Name, j.Active))
+	}
+	for _, api := range snap.DeprecatedAPIList {
+		issues = append(issues, fmt.Sprintf("deprecated API %s (%s) removed in k8s %s", api.Resource, api.Version, api.RemovedIn))
 	}
 	return issues
 }
@@ -148,6 +162,13 @@ func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterS
 			return fmt.Sprintf("Blocked by PodDisruptionBudget %s/%s", p.Namespace, p.Name)
 		}
 		return "Blocked by PodDisruptionBudget"
+	}
+	if len(snap.NodeIssues) > 0 {
+		msgs := make([]string, 0, len(snap.NodeIssues))
+		for _, n := range snap.NodeIssues {
+			msgs = append(msgs, fmt.Sprintf("%s (%s)", n.Name, n.Reason))
+		}
+		return fmt.Sprintf("%d node(s) with issues: %s", len(snap.NodeIssues), strings.Join(msgs, ", "))
 	}
 	if c.HighCPUPressure {
 		return fmt.Sprintf("High CPU pressure detected (%.0f%% of capacity)", m.Resources.CPUPressure*100)
@@ -162,8 +183,22 @@ func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterS
 		}
 		return fmt.Sprintf("%d pod(s) not ready: %s", len(snap.PodIssues), strings.Join(msgs, ", "))
 	}
-	if m.Compatibility.DeprecatedAPIs > 0 || m.Compatibility.AddonIssues > 0 {
-		return fmt.Sprintf("Risk detected: %d deprecated API(s), %d addon issue(s)", m.Compatibility.DeprecatedAPIs, m.Compatibility.AddonIssues)
+	if len(snap.StatefulSetIssues) > 0 {
+		ss := snap.StatefulSetIssues[0]
+		return fmt.Sprintf("StatefulSet %s/%s not fully ready (%d/%d replicas)", ss.Namespace, ss.Name, ss.ReadyReplicas, ss.TotalReplicas)
+	}
+	if len(snap.DaemonSetIssues) > 0 {
+		ds := snap.DaemonSetIssues[0]
+		return fmt.Sprintf("DaemonSet %s/%s has %d unavailable pod(s)", ds.Namespace, ds.Name, ds.NumberUnavailable)
+	}
+	if len(snap.JobIssues) > 0 {
+		return fmt.Sprintf("%d active job(s) may be interrupted during upgrade", len(snap.JobIssues))
+	}
+	if m.Compatibility.DeprecatedAPIs > 0 {
+		return fmt.Sprintf("Risk detected: %d deprecated API(s) in use", m.Compatibility.DeprecatedAPIs)
+	}
+	if m.Compatibility.AddonIssues > 0 {
+		return fmt.Sprintf("Risk detected: %d addon issue(s)", m.Compatibility.AddonIssues)
 	}
 	if level == levelSafe {
 		return "Cluster is ready for upgrade"

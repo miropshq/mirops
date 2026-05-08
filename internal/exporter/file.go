@@ -38,3 +38,7 @@ func (e *FileExporter) Export(report *analysis.Report) error {
 
 	return nil
 }
+
+func (e *FileExporter) Location() string {
+	return e.Path
+}

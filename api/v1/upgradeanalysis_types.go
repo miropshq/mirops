@@ -66,6 +66,37 @@ type SourceConfig struct {
 	// path is the file path when type is "file"
 	// +optional
 	Path string `json:"path,omitempty"`
+
+	// bucket is the S3 bucket name when type is "s3"
+	// +optional
+	Bucket string `json:"bucket,omitempty"`
+
+	// region is the AWS region when type is "s3"
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// key is the S3 object key (path inside bucket) when type is "s3"
+	// +optional
+	Key string `json:"key,omitempty"`
+
+	// accountName is the Azure Storage account name when type is "blob"
+	// +optional
+	AccountName string `json:"accountName,omitempty"`
+
+	// containerName is the Azure Blob container name when type is "blob"
+	// +optional
+	ContainerName string `json:"containerName,omitempty"`
+
+	// blobName is the Azure Blob object name when type is "blob"
+	// +optional
+	BlobName string `json:"blobName,omitempty"`
+
+	// credentialsSecret is the name of a Kubernetes Secret in the same namespace
+	// containing cloud credentials. Optional when using IRSA (AWS) or Workload Identity (Azure).
+	// For S3: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+	// For Blob: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+	// +optional
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
 }
 
 // UpgradeAnalysisSpec defines the desired state of UpgradeAnalysis

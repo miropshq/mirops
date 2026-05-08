@@ -18,10 +18,13 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -44,6 +47,12 @@ type UpgradeAnalysisReconciler struct {
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch
 
 // Reconcile implements the reconciliation loop for UpgradeAnalysis
 func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -91,20 +100,23 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	)
 
 	// Export report to configured source (default: file)
-	sourcePath := ua.Spec.Source.Path
-	exp := exporter.NewFileExporter(sourcePath)
+	exp, err := r.buildExporter(ctx, ua)
+	if err != nil {
+		log.Error(err, "failed to build exporter")
+		return ctrl.Result{}, err
+	}
 	if err := exp.Export(report); err != nil {
 		log.Error(err, "failed to export analysis report")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Report written", "path", exp.Path)
+	log.Info("Report written", "location", exp.Location())
 
 	// Update CR status
 	ua.Status.Decision = report.Decision.Level
 	ua.Status.TotalScore = report.Scores.Total
 	ua.Status.Reason = report.Reason
-	ua.Status.ReportPath = exp.Path
+	ua.Status.ReportPath = exp.Location()
 	ua.Status.LastAnalysisTime = &metav1.Time{Time: now}
 
 	if err := r.Client.Status().Update(ctx, ua); err != nil {
@@ -120,4 +132,45 @@ func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&miropsv1.UpgradeAnalysis{}).
 		Complete(r)
+}
+
+// buildExporter selects and configures the right exporter based on source.type.
+// When credentialsSecret is set, it reads credentials from the referenced Secret.
+func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *miropsv1.UpgradeAnalysis) (exporter.Exporter, error) {
+	src := ua.Spec.Source
+
+	// Read optional credentials secret
+	var secretData map[string][]byte
+	if src.CredentialsSecret != "" {
+		secret := &corev1.Secret{}
+		if err := r.Client.Get(ctx, types.NamespacedName{
+			Name:      src.CredentialsSecret,
+			Namespace: ua.Namespace,
+		}, secret); err != nil {
+			return nil, fmt.Errorf("reading credentials secret %q: %w", src.CredentialsSecret, err)
+		}
+		secretData = secret.Data
+	}
+
+	switch src.Type {
+	case miropsv1.SourceTypeS3:
+		return &exporter.S3Exporter{
+			Bucket:          src.Bucket,
+			Region:          src.Region,
+			Key:             src.Key,
+			AccessKeyID:     string(secretData["AWS_ACCESS_KEY_ID"]),
+			SecretAccessKey: string(secretData["AWS_SECRET_ACCESS_KEY"]),
+		}, nil
+	case miropsv1.SourceTypeBlob:
+		return &exporter.BlobExporter{
+			AccountName:   src.AccountName,
+			ContainerName: src.ContainerName,
+			BlobName:      src.BlobName,
+			ClientID:      string(secretData["AZURE_CLIENT_ID"]),
+			ClientSecret:  string(secretData["AZURE_CLIENT_SECRET"]),
+			TenantID:      string(secretData["AZURE_TENANT_ID"]),
+		}, nil
+	default:
+		return exporter.NewFileExporter(src.Path), nil
+	}
 }
