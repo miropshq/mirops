@@ -115,9 +115,7 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	}
 
 	// Detect deprecated API usage
-	if err := c.detectDeprecatedAPIs(ctx, snapshot); err != nil {
-		return nil, err
-	}
+	c.detectDeprecatedAPIs(snapshot)
 
 	return snapshot, nil
 }
@@ -302,12 +300,12 @@ var deprecatedAPIRemovedIn = map[string]string{
 
 // detectDeprecatedAPIs checks which API group/versions the cluster actually has
 // registered against the known deprecation list.
-func (c *DefaultClusterCollector) detectDeprecatedAPIs(_ context.Context, snapshot *ClusterSnapshot) error {
+func (c *DefaultClusterCollector) detectDeprecatedAPIs(snapshot *ClusterSnapshot) {
 	_, apiLists, err := c.DiscoveryClient.ServerGroupsAndResources()
 	if err != nil {
 		// Non-fatal: partial results are still useful
 		if apiLists == nil {
-			return nil
+			return
 		}
 	}
 	for _, apiList := range apiLists {
@@ -324,5 +322,4 @@ func (c *DefaultClusterCollector) detectDeprecatedAPIs(_ context.Context, snapsh
 			}
 		}
 	}
-	return nil
 }
