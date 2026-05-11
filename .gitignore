@@ -1,31 +1,56 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+*.local
+*.kubeconfig
+kubeconfig
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-bin/*
+bin/
 Dockerfile.cross
 
-# Test binary, built with `go test -c`
+# Go build, test, and coverage output
 *.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+coverage.out
+coverage.html
+*.coverprofile
+*.prof
+*.pprof
+dist/
 
-# Go workspace file
+# Go workspace and dependency caches
 go.work
+go.work.sum
+vendor/
 
-# Kubernetes Generated files - skip generated files, except for vendored files
-!vendor/**/zz_generated.*
-
-# editor and IDE paraphernalia
-.idea
-.vscode
-*.swp
-*.swo
-*~
-
-# Kubeconfig might contain secrets
-*.kubeconfig
+# Kubernetes and Kubebuilder local artifacts
+config/manager/manager.yaml.tmp
+.kubebuilder/
 files/
+
+# Generated installer/report artifacts
+install.yaml
+mirops-report.json
+report.json
+
+# Logs
+*.log
