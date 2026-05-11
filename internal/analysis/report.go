@@ -2,17 +2,84 @@ package analysis
 
 // Report is the full JSON output written to the source destination
 // and consumed by mirops-cli via --source flag.
+// Field order: identity → verdict → scores → conditions → metrics → workloads → issues (verbose last).
 type Report struct {
-	GeneratedAt    string     `json:"generatedAt"`
-	Cluster        string     `json:"cluster"`
-	ClusterVersion string     `json:"clusterVersion"`
-	TargetVersion  string     `json:"targetVersion"`
-	Scores         Scores     `json:"scores"`
-	Metrics        Metrics    `json:"metrics"`
-	Conditions     Conditions `json:"conditions"`
-	Decision       Decision   `json:"decision"`
-	Reason         string     `json:"reason"`
-	Issues         []string   `json:"issues,omitempty"`
+	GeneratedAt    string          `json:"generatedAt"`
+	Cluster        string          `json:"cluster"`
+	ClusterVersion string          `json:"clusterVersion"`
+	TargetVersion  string          `json:"targetVersion"`
+	Decision       Decision        `json:"decision"`
+	Reason         string          `json:"reason"`
+	Scores         Scores          `json:"scores"`
+	Conditions     Conditions      `json:"conditions"`
+	Metrics        Metrics         `json:"metrics"`
+	Workloads      ReportWorkloads `json:"workloads"`
+	Issues         []string        `json:"issues,omitempty"`
+}
+
+// ReportWorkloads groups cluster resources by kind for easy inspection.
+type ReportWorkloads struct {
+	Nodes          []NodeReport          `json:"nodes"`
+	Deployments    []DeploymentReport    `json:"deployments"`
+	StatefulSets   []StatefulSetReport   `json:"statefulsets"`
+	DaemonSets     []DaemonSetReport     `json:"daemonsets"`
+	Jobs           []JobReport           `json:"jobs"`
+	PDBs           []PDBReport           `json:"pdbs,omitempty"`
+	DeprecatedAPIs []DeprecatedAPIReport `json:"deprecatedApis,omitempty"`
+}
+
+type NodeReport struct {
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	Conditions []string `json:"conditions,omitempty"`
+}
+
+type WorkloadPodReport struct {
+	Name     string `json:"name"`
+	Reason   string `json:"reason,omitempty"`
+	Restarts int    `json:"restarts"`
+}
+
+type DeploymentReport struct {
+	Namespace       string              `json:"namespace"`
+	Name            string              `json:"name"`
+	ReadyReplicas   int32               `json:"readyReplicas"`
+	DesiredReplicas int32               `json:"desiredReplicas"`
+	Pods            []WorkloadPodReport `json:"pods,omitempty"`
+}
+
+type StatefulSetReport struct {
+	Namespace       string              `json:"namespace"`
+	Name            string              `json:"name"`
+	ReadyReplicas   int32               `json:"readyReplicas"`
+	DesiredReplicas int32               `json:"desiredReplicas"`
+	Pods            []WorkloadPodReport `json:"pods,omitempty"`
+}
+
+type DaemonSetReport struct {
+	Namespace         string              `json:"namespace"`
+	Name              string              `json:"name"`
+	NumberUnavailable int32               `json:"numberUnavailable"`
+	Pods              []WorkloadPodReport `json:"pods,omitempty"`
+}
+
+type JobReport struct {
+	Namespace string              `json:"namespace"`
+	Name      string              `json:"name"`
+	Active    int32               `json:"active"`
+	Pods      []WorkloadPodReport `json:"pods,omitempty"`
+}
+
+type PDBReport struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+type DeprecatedAPIReport struct {
+	Group     string `json:"group"`
+	Version   string `json:"version"`
+	Resource  string `json:"resource"`
+	RemovedIn string `json:"removedIn"`
 }
 
 type Scores struct {

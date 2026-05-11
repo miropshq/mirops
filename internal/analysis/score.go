@@ -40,11 +40,18 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 	level, allow := decide(total, c)
 
 	issues := buildIssues(snap)
+	workloads := buildWorkloads(snap)
 
 	return &Report{
 		Cluster:        snap.ClusterName,
 		ClusterVersion: snap.ClusterVersion,
 		TargetVersion:  targetVersion,
+		Decision: Decision{
+			Threshold: scoreThreshold,
+			Allow:     allow,
+			Level:     level,
+		},
+		Reason: buildReason(level, c, m, snap),
 		Scores: Scores{
 			Total:     total,
 			Health:    health,
@@ -52,15 +59,10 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 			Stability: stability,
 			Risk:      risk,
 		},
-		Metrics:    m,
 		Conditions: c,
-		Decision: Decision{
-			Threshold: scoreThreshold,
-			Allow:     allow,
-			Level:     level,
-		},
-		Reason: buildReason(level, c, m, snap),
-		Issues: issues,
+		Metrics:    m,
+		Workloads:  workloads,
+		Issues:     issues,
 	}
 }
 
@@ -204,6 +206,87 @@ func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterS
 		return "Cluster is ready for upgrade"
 	}
 	return "Cluster upgrade requires attention"
+}
+
+func buildWorkloads(snap *collector.ClusterSnapshot) ReportWorkloads {
+	nodes := make([]NodeReport, 0, len(snap.NodeWorkloads))
+	for _, n := range snap.NodeWorkloads {
+		nodes = append(nodes, NodeReport{Name: n.Name, Status: n.Status, Conditions: n.Conditions})
+	}
+
+	deployments := make([]DeploymentReport, 0, len(snap.DeploymentWorkloads))
+	for _, d := range snap.DeploymentWorkloads {
+		pods := make([]WorkloadPodReport, 0, len(d.Pods))
+		for _, p := range d.Pods {
+			pods = append(pods, WorkloadPodReport{Name: p.Name, Reason: p.Reason, Restarts: p.Restarts})
+		}
+		deployments = append(deployments, DeploymentReport{
+			Namespace: d.Namespace, Name: d.Name,
+			ReadyReplicas: d.ReadyReplicas, DesiredReplicas: d.DesiredReplicas,
+			Pods: pods,
+		})
+	}
+
+	statefulsets := make([]StatefulSetReport, 0, len(snap.StatefulSetIssues))
+	for _, ss := range snap.StatefulSetIssues {
+		pods := make([]WorkloadPodReport, 0, len(ss.Pods))
+		for _, p := range ss.Pods {
+			pods = append(pods, WorkloadPodReport{Name: p.Name, Reason: p.Reason, Restarts: p.Restarts})
+		}
+		statefulsets = append(statefulsets, StatefulSetReport{
+			Namespace: ss.Namespace, Name: ss.Name,
+			ReadyReplicas: ss.ReadyReplicas, DesiredReplicas: ss.TotalReplicas,
+			Pods: pods,
+		})
+	}
+
+	daemonsets := make([]DaemonSetReport, 0, len(snap.DaemonSetIssues))
+	for _, ds := range snap.DaemonSetIssues {
+		pods := make([]WorkloadPodReport, 0, len(ds.Pods))
+		for _, p := range ds.Pods {
+			pods = append(pods, WorkloadPodReport{Name: p.Name, Reason: p.Reason, Restarts: p.Restarts})
+		}
+		daemonsets = append(daemonsets, DaemonSetReport{
+			Namespace: ds.Namespace, Name: ds.Name,
+			NumberUnavailable: ds.NumberUnavailable,
+			Pods:              pods,
+		})
+	}
+
+	jobs := make([]JobReport, 0, len(snap.JobIssues))
+	for _, j := range snap.JobIssues {
+		pods := make([]WorkloadPodReport, 0, len(j.Pods))
+		for _, p := range j.Pods {
+			pods = append(pods, WorkloadPodReport{Name: p.Name, Reason: p.Reason, Restarts: p.Restarts})
+		}
+		jobs = append(jobs, JobReport{
+			Namespace: j.Namespace, Name: j.Name,
+			Active: j.Active, Pods: pods,
+		})
+	}
+
+	pdbs := make([]PDBReport, 0, len(snap.PDBIssues))
+	for _, pdb := range snap.PDBIssues {
+		pdbs = append(pdbs, PDBReport{Namespace: pdb.Namespace, Name: pdb.Name})
+	}
+
+	apis := make([]DeprecatedAPIReport, 0, len(snap.DeprecatedAPIList))
+	for _, api := range snap.DeprecatedAPIList {
+		apis = append(apis, DeprecatedAPIReport{
+			Group: api.Group, Version: api.Version,
+			Resource: api.Resource, RemovedIn: api.RemovedIn,
+		})
+	}
+
+	return ReportWorkloads{
+		Nodes:          nodes,
+		Deployments:    deployments,
+		StatefulSets:   statefulsets,
+		DaemonSets:     daemonsets,
+		Jobs:           jobs,
+		PDBs:           pdbs,
+		DeprecatedAPIs: apis,
+	}
 }
 
 func nonZero(v float64) float64 {

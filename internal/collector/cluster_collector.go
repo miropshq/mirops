@@ -53,6 +53,18 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		}
 	}
 
+	// Build ReplicaSet → Deployment map to resolve pod ownership
+	rsToDeploy, err := c.buildRSToDeployMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Maps for grouping not-ready pods by parent workload key ("namespace/name")
+	podsByDeployment := make(map[string][]WorkloadPod)
+	podsByStatefulSet := make(map[string][]WorkloadPod)
+	podsByDaemonSet := make(map[string][]WorkloadPod)
+	podsByJob := make(map[string][]WorkloadPod)
+
 	// Collect pods across all (non-excluded) namespaces
 	podList := &corev1.PodList{}
 	if err := c.Client.List(ctx, podList); err != nil {
@@ -69,15 +81,37 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		}
 		snapshot.TotalRestarts += restarts
 
-		if !isPodReady(&pod) {
+		ready := isPodReady(&pod)
+		var reason string
+		if !ready {
 			snapshot.NotReadyPods++
-			reason := podNotReadyReason(&pod)
+			reason = podNotReadyReason(&pod)
 			snapshot.PodIssues = append(snapshot.PodIssues, PodIssue{
 				Namespace: pod.Namespace,
 				Name:      pod.Name,
 				Reason:    reason,
 				Restarts:  restarts,
 			})
+			// Group not-ready pod under its parent workload
+			wp := WorkloadPod{Name: pod.Name, Reason: reason, Restarts: restarts}
+			for _, ref := range pod.OwnerReferences {
+				switch ref.Kind {
+				case "ReplicaSet":
+					if dName, ok := rsToDeploy[pod.Namespace+"/"+ref.Name]; ok {
+						key := pod.Namespace + "/" + dName
+						podsByDeployment[key] = append(podsByDeployment[key], wp)
+					}
+				case "StatefulSet":
+					key := pod.Namespace + "/" + ref.Name
+					podsByStatefulSet[key] = append(podsByStatefulSet[key], wp)
+				case "DaemonSet":
+					key := pod.Namespace + "/" + ref.Name
+					podsByDaemonSet[key] = append(podsByDaemonSet[key], wp)
+				case "Job":
+					key := pod.Namespace + "/" + ref.Name
+					podsByJob[key] = append(podsByJob[key], wp)
+				}
+			}
 		}
 	}
 
@@ -87,6 +121,11 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 			return nil, err
 		}
 		snapshot.Resources = append(snapshot.Resources, resources...)
+	}
+
+	// Collect all deployments with pod details
+	if err := c.collectDeployments(ctx, excluded, snapshot, podsByDeployment); err != nil {
+		return nil, err
 	}
 
 	// Collect nodes — check for pressure/NotReady conditions
@@ -100,17 +139,17 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	}
 
 	// Collect StatefulSets
-	if err := c.collectStatefulSets(ctx, excluded, snapshot); err != nil {
+	if err := c.collectStatefulSets(ctx, excluded, snapshot, podsByStatefulSet); err != nil {
 		return nil, err
 	}
 
 	// Collect DaemonSets
-	if err := c.collectDaemonSets(ctx, excluded, snapshot); err != nil {
+	if err := c.collectDaemonSets(ctx, excluded, snapshot, podsByDaemonSet); err != nil {
 		return nil, err
 	}
 
 	// Collect active Jobs
-	if err := c.collectJobs(ctx, excluded, snapshot); err != nil {
+	if err := c.collectJobs(ctx, excluded, snapshot, podsByJob); err != nil {
 		return nil, err
 	}
 
@@ -118,6 +157,50 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	c.detectDeprecatedAPIs(snapshot)
 
 	return snapshot, nil
+}
+
+// buildRSToDeployMap builds a map of "namespace/replicaset-name" → deployment-name.
+func (c *DefaultClusterCollector) buildRSToDeployMap(ctx context.Context) (map[string]string, error) {
+	rsList := &appsv1.ReplicaSetList{}
+	if err := c.Client.List(ctx, rsList); err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(rsList.Items))
+	for _, rs := range rsList.Items {
+		for _, ref := range rs.OwnerReferences {
+			if ref.Kind == "Deployment" {
+				m[rs.Namespace+"/"+rs.Name] = ref.Name
+				break
+			}
+		}
+	}
+	return m, nil
+}
+
+// collectDeployments collects all deployments and attaches not-ready pods.
+func (c *DefaultClusterCollector) collectDeployments(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByDeployment map[string][]WorkloadPod) error {
+	depList := &appsv1.DeploymentList{}
+	if err := c.Client.List(ctx, depList); err != nil {
+		return err
+	}
+	for _, dep := range depList.Items {
+		if excluded[dep.Namespace] {
+			continue
+		}
+		desired := int32(1)
+		if dep.Spec.Replicas != nil {
+			desired = *dep.Spec.Replicas
+		}
+		key := dep.Namespace + "/" + dep.Name
+		snapshot.DeploymentWorkloads = append(snapshot.DeploymentWorkloads, DeploymentWorkload{
+			Namespace:       dep.Namespace,
+			Name:            dep.Name,
+			ReadyReplicas:   dep.Status.ReadyReplicas,
+			DesiredReplicas: desired,
+			Pods:            podsByDeployment[key],
+		})
+	}
+	return nil
 }
 
 func isPodReady(pod *corev1.Pod) bool {
@@ -159,25 +242,36 @@ func (c *DefaultClusterCollector) collectNodes(ctx context.Context, snapshot *Cl
 		return err
 	}
 	for _, node := range nodeList.Items {
+		status := "Ready"
+		var conditions []string
 		for _, cond := range node.Status.Conditions {
 			if cond.Status != corev1.ConditionTrue {
 				continue
 			}
 			switch cond.Type {
 			case corev1.NodeMemoryPressure:
+				conditions = append(conditions, "MemoryPressure")
 				snapshot.NodeIssues = append(snapshot.NodeIssues, NodeIssue{Name: node.Name, Reason: "MemoryPressure"})
 			case corev1.NodeDiskPressure:
+				conditions = append(conditions, "DiskPressure")
 				snapshot.NodeIssues = append(snapshot.NodeIssues, NodeIssue{Name: node.Name, Reason: "DiskPressure"})
 			case corev1.NodePIDPressure:
+				conditions = append(conditions, "PIDPressure")
 				snapshot.NodeIssues = append(snapshot.NodeIssues, NodeIssue{Name: node.Name, Reason: "PIDPressure"})
 			}
 		}
-		// Check NotReady separately (Ready condition must be True; if False/Unknown → issue)
 		for _, cond := range node.Status.Conditions {
 			if cond.Type == corev1.NodeReady && cond.Status != corev1.ConditionTrue {
+				status = "NotReady"
+				conditions = append(conditions, "NotReady")
 				snapshot.NodeIssues = append(snapshot.NodeIssues, NodeIssue{Name: node.Name, Reason: "NotReady"})
 			}
 		}
+		snapshot.NodeWorkloads = append(snapshot.NodeWorkloads, NodeWorkload{
+			Name:       node.Name,
+			Status:     status,
+			Conditions: conditions,
+		})
 	}
 	return nil
 }
@@ -204,7 +298,7 @@ func (c *DefaultClusterCollector) collectPDBs(ctx context.Context, excluded map[
 }
 
 // collectStatefulSets detects StatefulSets that are not fully ready.
-func (c *DefaultClusterCollector) collectStatefulSets(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot) error {
+func (c *DefaultClusterCollector) collectStatefulSets(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByStatefulSet map[string][]WorkloadPod) error {
 	ssList := &appsv1.StatefulSetList{}
 	if err := c.Client.List(ctx, ssList); err != nil {
 		return err
@@ -221,11 +315,13 @@ func (c *DefaultClusterCollector) collectStatefulSets(ctx context.Context, exclu
 			desired = *ss.Spec.Replicas
 		}
 		if ss.Status.ReadyReplicas < desired {
+			key := ss.Namespace + "/" + ss.Name
 			snapshot.StatefulSetIssues = append(snapshot.StatefulSetIssues, StatefulSetIssue{
 				Namespace:     ss.Namespace,
 				Name:          ss.Name,
 				ReadyReplicas: ss.Status.ReadyReplicas,
 				TotalReplicas: desired,
+				Pods:          podsByStatefulSet[key],
 			})
 		}
 	}
@@ -233,7 +329,7 @@ func (c *DefaultClusterCollector) collectStatefulSets(ctx context.Context, exclu
 }
 
 // collectDaemonSets detects DaemonSets with unavailable pods.
-func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot) error {
+func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByDaemonSet map[string][]WorkloadPod) error {
 	dsList := &appsv1.DaemonSetList{}
 	if err := c.Client.List(ctx, dsList); err != nil {
 		return err
@@ -246,10 +342,12 @@ func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, exclude
 			Namespace: ds.Namespace, Name: ds.Name, APIVersion: "apps/v1", Kind: "DaemonSet",
 		})
 		if ds.Status.NumberUnavailable > 0 {
+			key := ds.Namespace + "/" + ds.Name
 			snapshot.DaemonSetIssues = append(snapshot.DaemonSetIssues, DaemonSetIssue{
 				Namespace:         ds.Namespace,
 				Name:              ds.Name,
 				NumberUnavailable: ds.Status.NumberUnavailable,
+				Pods:              podsByDaemonSet[key],
 			})
 		}
 	}
@@ -257,7 +355,7 @@ func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, exclude
 }
 
 // collectJobs detects active Jobs that may be interrupted during the upgrade.
-func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot) error {
+func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByJob map[string][]WorkloadPod) error {
 	jobList := &batchv1.JobList{}
 	if err := c.Client.List(ctx, jobList); err != nil {
 		return err
@@ -267,10 +365,12 @@ func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[
 			continue
 		}
 		if job.Status.Active > 0 {
+			key := job.Namespace + "/" + job.Name
 			snapshot.JobIssues = append(snapshot.JobIssues, JobIssue{
 				Namespace: job.Namespace,
 				Name:      job.Name,
 				Active:    job.Status.Active,
+				Pods:      podsByJob[key],
 			})
 		}
 	}

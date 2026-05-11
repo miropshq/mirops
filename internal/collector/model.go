@@ -27,12 +27,36 @@ type PDBIssue struct {
 	Name      string
 }
 
+// WorkloadPod is a pod grouped under its parent workload in the report
+type WorkloadPod struct {
+	Name     string `json:"name"`
+	Reason   string `json:"reason,omitempty"`
+	Restarts int    `json:"restarts"`
+}
+
+// NodeWorkload represents a node with its readiness status
+type NodeWorkload struct {
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	Conditions []string `json:"conditions,omitempty"`
+}
+
+// DeploymentWorkload represents a deployment with its pod details
+type DeploymentWorkload struct {
+	Namespace       string        `json:"namespace"`
+	Name            string        `json:"name"`
+	ReadyReplicas   int32         `json:"readyReplicas"`
+	DesiredReplicas int32         `json:"desiredReplicas"`
+	Pods            []WorkloadPod `json:"pods,omitempty"`
+}
+
 // StatefulSetIssue describes a StatefulSet that is not fully ready
 type StatefulSetIssue struct {
 	Namespace     string
 	Name          string
 	ReadyReplicas int32
 	TotalReplicas int32
+	Pods          []WorkloadPod
 }
 
 // DaemonSetIssue describes a DaemonSet that has unavailable pods
@@ -40,6 +64,7 @@ type DaemonSetIssue struct {
 	Namespace         string
 	Name              string
 	NumberUnavailable int32
+	Pods              []WorkloadPod
 }
 
 // JobIssue describes an active Job that may be interrupted by the upgrade
@@ -47,6 +72,7 @@ type JobIssue struct {
 	Namespace string
 	Name      string
 	Active    int32
+	Pods      []WorkloadPod
 }
 
 // DeprecatedAPI describes a resource using a deprecated API version
@@ -86,6 +112,10 @@ type ClusterSnapshot struct {
 	AddonIssues       int
 	PDBBlocking       bool
 	PDBIssues         []PDBIssue
+
+	// Workload hierarchy (for report workloads section)
+	NodeWorkloads       []NodeWorkload
+	DeploymentWorkloads []DeploymentWorkload
 
 	// Workload issues
 	StatefulSetIssues []StatefulSetIssue
