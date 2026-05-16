@@ -1,135 +1,177 @@
-# mirops
-// TODO(user): Add simple overview of use/purpose
+# Mirops Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Mirops is a Kubernetes operator that analyzes whether a cluster is ready for a Kubernetes version upgrade. It watches `UpgradeAnalysis` custom resources, collects cluster health and workload signals, calculates an upgrade-readiness score, and writes a JSON report to a configured destination.
 
-## Getting Started
+The report can be consumed by `mirops-cli` in CI/CD pipelines to warn or block an upgrade when the cluster is not healthy enough.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+## What It Checks
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Pod readiness and restart counts
+- Node readiness and cluster capacity pressure
+- StatefulSet, DaemonSet, Job, and PodDisruptionBudget risks
+- Deprecated API usage for the target Kubernetes version
+- Overall readiness score from 0 to 100
+- Final decision: `SAFE`, `WARNING`, or `BLOCK`
 
-```sh
-make docker-build docker-push IMG=<some-registry>/mirops:tag
+## Repository Layout
+
+```text
+api/                 UpgradeAnalysis API types and generated code
+cmd/                 Operator entrypoint
+config/              CRDs, RBAC, manager, samples, and kustomize overlays
+internal/analysis/   Scoring and report generation
+internal/collector/  Kubernetes cluster data collection
+internal/controller/ UpgradeAnalysis reconciliation logic
+internal/exporter/   File, S3, and Azure Blob report exporters
+test/                Envtest and e2e tests
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Prerequisites
 
-**Install the CRDs into the cluster:**
+- Go 1.24.6 or newer
+- Docker or another compatible container tool
+- `kubectl`
+- Access to a Kubernetes cluster
+- Optional: `kind` for e2e tests
+
+Project tools such as `controller-gen`, `kustomize`, `setup-envtest`, and `golangci-lint` are installed into `bin/` by the Makefile when needed.
+
+## Local Development
+
+Format, generate, vet, and run tests:
+
+```sh
+make test
+```
+
+Run the controller locally against the current kubeconfig:
+
+```sh
+make run
+```
+
+Build the manager binary:
+
+```sh
+make build
+```
+
+Run e2e tests with Kind:
+
+```sh
+make test-e2e
+```
+
+## Deploy With Kustomize
+
+Build and push the controller image:
+
+```sh
+make docker-build docker-push IMG=<registry>/mirops:<tag>
+```
+
+Install the CRDs:
 
 ```sh
 make install
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+Deploy the controller:
 
 ```sh
-make deploy IMG=<some-registry>/mirops:tag
+make deploy IMG=<registry>/mirops:<tag>
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+Create an `UpgradeAnalysis`:
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: UpgradeAnalysis
+metadata:
+  name: upgrade-check
+  namespace: mirops
+spec:
+  targetVersion: "1.29"
+  scope:
+    mode: application
+    excludeNamespaces:
+      - monitoring
+  source:
+    type: file
+    path: /tmp/mirops-report.json
+```
+
+Apply it:
 
 ```sh
-kubectl apply -k config/samples/
+kubectl apply -f upgrade-analysis.yaml
+kubectl get upgradeanalysis -n mirops
+kubectl describe upgradeanalysis upgrade-check -n mirops
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+## Report Destinations
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+By default, the operator writes a local JSON report through the file exporter. The `spec.source.type` field supports:
+
+| Type | Purpose | Key fields |
+| ---- | ------- | ---------- |
+| `file` | Write the report to the controller filesystem | `path` |
+| `s3` | Upload the report to Amazon S3 | `bucket`, `region`, `key`, `credentialsSecret` |
+| `blob` | Upload the report to Azure Blob Storage | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
+
+When `credentialsSecret` is set, the operator reads credentials from a Kubernetes Secret in the same namespace as the `UpgradeAnalysis`.
+
+S3 secret keys:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
+
+Azure secret keys:
+
+```text
+AZURE_CLIENT_ID
+AZURE_CLIENT_SECRET
+AZURE_TENANT_ID
+```
+
+## Uninstall
+
+Delete sample resources:
 
 ```sh
 kubectl delete -k config/samples/
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
+Remove the controller:
 
 ```sh
 make undeploy
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+Remove the CRDs:
 
 ```sh
-make build-installer IMG=<some-registry>/mirops:tag
+make uninstall
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+## Build A Single Installer
 
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+Generate a bundled manifest in `dist/install.yaml`:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/mirops/<tag or branch>/dist/install.yaml
+make build-installer IMG=<registry>/mirops:<tag>
 ```
 
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
+Users can install the generated bundle with:
 
 ```sh
-kubebuilder edit --plugins=helm/v2-alpha
+kubectl apply -f dist/install.yaml
 ```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
 Copyright 2026.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Licensed under the Apache License, Version 2.0. See the license text in this repository for details.
