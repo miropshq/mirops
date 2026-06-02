@@ -54,6 +54,7 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 		Reason: buildReason(level, c, m, snap),
 		Scores: Scores{
 			Total:     total,
+			Base:      total,
 			Health:    health,
 			Capacity:  capacity,
 			Stability: stability,
@@ -318,4 +319,22 @@ func clamp(v, max int) int {
 		return max
 	}
 	return v
+}
+
+// ApplyAIScore blends an AI score into an existing report using the 70/30 formula:
+//
+//	total = base*0.7 + aiScore*0.3
+//
+// The decision level is re-evaluated against the new total.
+// reasoning is only set when non-empty (ai.enabled == true path).
+func ApplyAIScore(report *Report, aiScore int, reasoning string) {
+	blended := int(float64(report.Scores.Base)*0.7 + float64(aiScore)*0.3)
+	report.Scores.AI = aiScore
+	report.Scores.Total = blended
+	if reasoning != "" {
+		report.AIReasoning = reasoning
+	}
+	level, allow := decide(blended, report.Conditions)
+	report.Decision.Level = level
+	report.Decision.Allow = allow
 }
