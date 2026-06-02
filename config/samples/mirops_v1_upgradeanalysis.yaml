@@ -3,4 +3,12 @@ kind: UpgradeAnalysis
 metadata:
   name: upgradeanalysis-sample
   namespace: mirops
-spec: {}
+spec:
+  targetVersion: "1.29"
+  scope:
+    mode: application
+  source:
+    type: file
+    path: /tmp/mirops-report.json
+  resync:
+    interval: 15m

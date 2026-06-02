@@ -10,6 +10,7 @@ type Report struct {
 	TargetVersion  string          `json:"targetVersion"`
 	Decision       Decision        `json:"decision"`
 	Reason         string          `json:"reason"`
+	AIReasoning    string          `json:"aiReasoning,omitempty"`
 	Scores         Scores          `json:"scores"`
 	Conditions     Conditions      `json:"conditions"`
 	Metrics        Metrics         `json:"metrics"`
@@ -84,10 +85,12 @@ type DeprecatedAPIReport struct {
 
 type Scores struct {
 	Total     int `json:"total"`
+	Base      int `json:"base"`
 	Health    int `json:"health"`
 	Capacity  int `json:"capacity"`
 	Stability int `json:"stability"`
 	Risk      int `json:"risk"`
+	AI        int `json:"ai,omitempty"`
 }
 
 type Metrics struct {

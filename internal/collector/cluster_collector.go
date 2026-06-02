@@ -80,6 +80,14 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 			restarts += int(cs.RestartCount)
 		}
 		snapshot.TotalRestarts += restarts
+		for _, c := range pod.Spec.Containers {
+			if cpu, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
+				snapshot.CPURequests += float64(cpu.MilliValue())
+			}
+			if mem, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+				snapshot.MemRequests += float64(mem.Value())
+			}
+		}
 
 		ready := isPodReady(&pod)
 		var reason string
@@ -242,6 +250,12 @@ func (c *DefaultClusterCollector) collectNodes(ctx context.Context, snapshot *Cl
 		return err
 	}
 	for _, node := range nodeList.Items {
+		if cpu, ok := node.Status.Allocatable[corev1.ResourceCPU]; ok {
+			snapshot.CPUCapacity += float64(cpu.MilliValue())
+		}
+		if mem, ok := node.Status.Allocatable[corev1.ResourceMemory]; ok {
+			snapshot.MemCapacity += float64(mem.Value())
+		}
 		status := "Ready"
 		var conditions []string
 		for _, cond := range node.Status.Conditions {

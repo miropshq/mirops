@@ -23,6 +23,45 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// AIProvider identifies which AI backend to use for scoring
+// +kubebuilder:validation:Enum=anthropic;openai
+type AIProvider string
+
+const (
+	AIProviderAnthropic AIProvider = "anthropic"
+	AIProviderOpenAI    AIProvider = "openai"
+)
+
+// AIConfig enables AI-assisted scoring. When enabled, the final score is
+// baseScore*0.7 + aiScore*0.3 instead of baseScore*1.0.
+type AIConfig struct {
+	// enabled activates AI scoring (base 70% + AI 30%)
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// provider is the AI backend to use
+	// +kubebuilder:validation:Enum=anthropic;openai
+	// +optional
+	Provider AIProvider `json:"provider,omitempty"`
+
+	// model is the model name to call (e.g. claude-sonnet-4-6)
+	// +optional
+	Model string `json:"model,omitempty"`
+
+	// credentialsSecret is a Secret in the same namespace containing the API key.
+	// Key name: ANTHROPIC_API_KEY or OPENAI_API_KEY
+	// +optional
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+}
+
+// ResyncConfig controls how often the analysis is re-run automatically.
+type ResyncConfig struct {
+	// interval is how often to re-run the analysis (e.g. "15m", "1h").
+	// When empty, the analysis runs once and stops.
+	// +optional
+	Interval metav1.Duration `json:"interval,omitempty"`
+}
+
 // SourceType defines where the analysis report will be written
 // +kubebuilder:validation:Enum=file;s3;blob
 type SourceType string
@@ -113,6 +152,16 @@ type UpgradeAnalysisSpec struct {
 	// source defines where the analysis report will be written
 	// +optional
 	Source SourceConfig `json:"source,omitempty"`
+
+	// ai configures optional AI-assisted scoring.
+	// When enabled the final score becomes baseScore*0.7 + aiScore*0.3.
+	// +optional
+	AI AIConfig `json:"ai,omitempty"`
+
+	// resync controls automatic re-analysis on an interval.
+	// When omitted the analysis runs once per reconcile.
+	// +optional
+	Resync ResyncConfig `json:"resync,omitempty"`
 }
 
 // UpgradeAnalysisStatus defines the observed state of UpgradeAnalysis.
@@ -142,6 +191,22 @@ type UpgradeAnalysisStatus struct {
 	// reportPath is where the JSON report was written
 	// +optional
 	ReportPath string `json:"reportPath,omitempty"`
+
+	// aiScore is the score returned by the AI model (0-100), 0 when AI is disabled
+	// +optional
+	AIScore int `json:"aiScore,omitempty"`
+
+	// aiReasoning is the explanation provided by the AI model, only set when ai.enabled is true
+	// +optional
+	AIReasoning string `json:"aiReasoning,omitempty"`
+
+	// lastTotalPods is the pod count from the previous reconciliation, used to compute stability delta
+	// +optional
+	LastTotalPods int `json:"lastTotalPods,omitempty"`
+
+	// lastTotalRestarts is the restart count from the previous reconciliation, used to compute stability delta
+	// +optional
+	LastTotalRestarts int `json:"lastTotalRestarts,omitempty"`
 }
 
 // +kubebuilder:object:root=true

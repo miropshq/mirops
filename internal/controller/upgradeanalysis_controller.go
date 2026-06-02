@@ -81,6 +81,8 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		log.Error(err, "failed to collect cluster snapshot")
 		return ctrl.Result{}, err
 	}
+	snapshot.PreviousTotalPods = ua.Status.LastTotalPods
+	snapshot.PreviousRestarts = ua.Status.LastTotalRestarts
 
 	log.Info("Cluster snapshot collected",
 		"clusterVersion", snapshot.ClusterVersion,
@@ -97,9 +99,23 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	log.Info("Analysis completed",
 		"decision", report.Decision.Level,
-		"totalScore", report.Scores.Total,
+		"baseScore", report.Scores.Base,
 		"reason", report.Reason,
 	)
+
+	// Apply AI score if enabled (base*0.7 + ai*0.3)
+	if ua.Spec.AI.Enabled {
+		aiScore, reasoning, err := r.scoreWithAI(ctx, ua, report)
+		if err != nil {
+			log.Error(err, "AI scoring failed, proceeding with base score only")
+		} else {
+			analysis.ApplyAIScore(report, aiScore, reasoning)
+			log.Info("AI score applied",
+				"aiScore", aiScore,
+				"totalScore", report.Scores.Total,
+			)
+		}
+	}
 
 	// Export report to configured source (default: file)
 	exp, err := r.buildExporter(ctx, ua)
@@ -117,15 +133,22 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Update CR status
 	ua.Status.Decision = report.Decision.Level
 	ua.Status.TotalScore = report.Scores.Total
+	ua.Status.AIScore = report.Scores.AI
+	ua.Status.AIReasoning = report.AIReasoning
 	ua.Status.Reason = report.Reason
 	ua.Status.ReportPath = exp.Location()
 	ua.Status.LastAnalysisTime = &metav1.Time{Time: now}
+	ua.Status.LastTotalPods = snapshot.TotalPods
+	ua.Status.LastTotalRestarts = snapshot.TotalRestarts
 
 	if err := r.Client.Status().Update(ctx, ua); err != nil {
 		log.Error(err, "failed to update UpgradeAnalysis status")
 		return ctrl.Result{}, err
 	}
 
+	if interval := ua.Spec.Resync.Interval.Duration; interval > 0 {
+		return ctrl.Result{RequeueAfter: interval}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -134,6 +157,13 @@ func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&miropsv1.UpgradeAnalysis{}).
 		Complete(r)
+}
+
+// scoreWithAI calls the configured AI provider and returns a score from 0 to 100.
+// It reads the API key from the credentials secret when present.
+func (r *UpgradeAnalysisReconciler) scoreWithAI(_ context.Context, ua *miropsv1.UpgradeAnalysis, _ *analysis.Report) (int, string, error) {
+	// TODO: implement AI provider call (anthropic / openai)
+	return 0, "", fmt.Errorf("AI scoring not yet implemented for provider %q", ua.Spec.AI.Provider)
 }
 
 // buildExporter selects and configures the right exporter based on source.type.
