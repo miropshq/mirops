@@ -45,7 +45,7 @@ func scoreWithAnthropic(ctx context.Context, apiKey, model, prompt string) (int,
 	}
 	client := anthropic.NewClient(anthropicoption.WithAPIKey(apiKey))
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(model),
+		Model:     model,
 		MaxTokens: 1024,
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
@@ -66,7 +66,7 @@ func scoreWithOpenAI(ctx context.Context, apiKey, model, prompt string) (int, st
 	}
 	client := openai.NewClient(openaioption.WithAPIKey(apiKey))
 	resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: openai.ChatModel(model),
+		Model: model,
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(prompt),
 		},
