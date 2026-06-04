@@ -159,13 +159,6 @@ func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// scoreWithAI calls the configured AI provider and returns a score from 0 to 100.
-// It reads the API key from the credentials secret when present.
-func (r *UpgradeAnalysisReconciler) scoreWithAI(_ context.Context, ua *miropsv1.UpgradeAnalysis, _ *analysis.Report) (int, string, error) {
-	// TODO: implement AI provider call (anthropic / openai)
-	return 0, "", fmt.Errorf("AI scoring not yet implemented for provider %q", ua.Spec.AI.Provider)
-}
-
 // buildExporter selects and configures the right exporter based on source.type.
 // When credentialsSecret is set, it reads credentials from the referenced Secret.
 func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *miropsv1.UpgradeAnalysis) (exporter.Exporter, error) {
