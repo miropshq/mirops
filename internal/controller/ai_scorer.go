@@ -114,7 +114,7 @@ func buildAIPrompt(report *analysis.Report) string {
 
 	fmt.Fprintf(&b, "CLUSTER:\n")
 	fmt.Fprintf(&b, "Current version: %s | Target: %s\n", report.ClusterVersion, report.TargetVersion)
-	fmt.Fprintf(&b, "Base score: %d/100 | Decision: %s\n", report.Scores.Base, report.Decision.Level)
+	fmt.Fprintf(&b, "Base score: %d/100 | Decision: %s\n", report.Scores.Base.Score, report.Decision.Level)
 	fmt.Fprintf(&b, "Reason: %s\n\n", report.Reason)
 
 	if len(report.Issues) > 0 {
