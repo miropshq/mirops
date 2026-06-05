@@ -84,13 +84,28 @@ type DeprecatedAPIReport struct {
 }
 
 type Scores struct {
-	Total     int `json:"total"`
-	Base      int `json:"base"`
-	Health    int `json:"health"`
-	Capacity  int `json:"capacity"`
-	Stability int `json:"stability"`
-	Risk      int `json:"risk"`
-	AI        int `json:"ai,omitempty"`
+	Total int        `json:"total"`
+	Base  BaseScores `json:"base"`
+	AI    AIScores   `json:"ai,omitempty"`
+}
+
+// BaseScores is the rule-based component of the total score.
+type BaseScores struct {
+	Score        int    `json:"score"`
+	Weight       string `json:"weight"`
+	Contribution int    `json:"contribution"`
+	Health       int    `json:"health"`
+	Capacity     int    `json:"capacity"`
+	Stability    int    `json:"stability"`
+	Risk         int    `json:"risk"`
+}
+
+// AIScores is the AI model component of the total score.
+// Only present when ai.enabled is true.
+type AIScores struct {
+	Score        int    `json:"score"`
+	Weight       string `json:"weight"`
+	Contribution int    `json:"contribution"`
 }
 
 type Metrics struct {
