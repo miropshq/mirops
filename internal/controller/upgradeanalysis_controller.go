@@ -48,7 +48,7 @@ type UpgradeAnalysisReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
@@ -67,6 +67,15 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	log.Info("Reconciling UpgradeAnalysis", "name", ua.Name, "namespace", ua.Namespace)
+
+	// Skip if the last analysis ran within the resync interval to avoid
+	// calling the AI API on every status update.
+	if interval := ua.Spec.Resync.Interval.Duration; interval > 0 && ua.Status.LastAnalysisTime != nil {
+		next := ua.Status.LastAnalysisTime.Add(interval)
+		if time.Now().Before(next) {
+			return ctrl.Result{RequeueAfter: time.Until(next)}, nil
+		}
+	}
 
 	// Collect cluster snapshot
 	scope := collector.Scope{
