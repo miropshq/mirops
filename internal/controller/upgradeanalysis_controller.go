@@ -108,7 +108,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	log.Info("Analysis completed",
 		"decision", report.Decision.Level,
-		"baseScore", report.Scores.Base,
+		"baseScore", report.Scores.Base.Score,
 		"reason", report.Reason,
 	)
 
@@ -142,7 +142,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Update CR status
 	ua.Status.Decision = report.Decision.Level
 	ua.Status.TotalScore = report.Scores.Total
-	ua.Status.AIScore = report.Scores.AI
+	ua.Status.AIScore = report.Scores.AI.Score
 	ua.Status.AIReasoning = report.AIReasoning
 	ua.Status.Reason = report.Reason
 	ua.Status.ReportPath = exp.Location()
