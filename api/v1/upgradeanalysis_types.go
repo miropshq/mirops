@@ -32,6 +32,21 @@ const (
 	AIProviderOpenAI    AIProvider = "openai"
 )
 
+// RemediationConfig controls whether the AI can propose remediation actions
+type RemediationConfig struct {
+	// enabled allows the AI to propose remediation actions after scoring.
+	// When true, a RemediationPlan CR is created with the proposed actions.
+	// The plan requires manual approval (spec.approved=true) before executing.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// maxRiskLevel is the highest risk level of actions the AI may propose.
+	// Actions above this level are excluded from the plan.
+	// +kubebuilder:default=low
+	// +kubebuilder:validation:Enum=low;medium;high
+	MaxRiskLevel RiskLevel `json:"maxRiskLevel,omitempty"`
+}
+
 // AIConfig enables AI-assisted scoring. When enabled, the final score is
 // baseScore*0.7 + aiScore*0.3 instead of baseScore*1.0.
 type AIConfig struct {
@@ -52,6 +67,10 @@ type AIConfig struct {
 	// Key name: ANTHROPIC_API_KEY or OPENAI_API_KEY
 	// +optional
 	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+
+	// remediation configures optional AI-proposed remediation actions.
+	// +optional
+	Remediation RemediationConfig `json:"remediation,omitempty"`
 }
 
 // ResyncConfig controls how often the analysis is re-run automatically.
@@ -199,6 +218,10 @@ type UpgradeAnalysisStatus struct {
 	// aiReasoning is the explanation provided by the AI model, only set when ai.enabled is true
 	// +optional
 	AIReasoning string `json:"aiReasoning,omitempty"`
+
+	// aiModel is the model used for AI scoring, only set when ai.enabled is true
+	// +optional
+	AIModel string `json:"aiModel,omitempty"`
 
 	// lastTotalPods is the pod count from the previous reconciliation, used to compute stability delta
 	// +optional

@@ -106,6 +106,7 @@ type AIScores struct {
 	Score        int    `json:"score"`
 	Weight       string `json:"weight"`
 	Contribution int    `json:"contribution"`
+	Model        string `json:"model,omitempty"`
 }
 
 type Metrics struct {

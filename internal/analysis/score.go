@@ -331,7 +331,7 @@ func clamp(v, max int) int {
 //
 // The decision level is re-evaluated against the new total.
 // reasoning is only set when non-empty (ai.enabled == true path).
-func ApplyAIScore(report *Report, aiScore int, reasoning string) {
+func ApplyAIScore(report *Report, aiScore int, reasoning, model string) {
 	baseScore := report.Scores.Base.Score
 	baseContribution := int(float64(baseScore) * 0.7)
 	aiContribution := int(float64(aiScore) * 0.3)
@@ -343,6 +343,7 @@ func ApplyAIScore(report *Report, aiScore int, reasoning string) {
 		Score:        aiScore,
 		Weight:       "30%",
 		Contribution: aiContribution,
+		Model:        model,
 	}
 	report.Scores.Total = blended
 	if reasoning != "" {

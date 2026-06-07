@@ -18,28 +18,44 @@ import (
 )
 
 type aiScoreResponse struct {
-	Score     int    `json:"score"`
-	Reasoning string `json:"reasoning"`
+	Score     int             `json:"score"`
+	Reasoning string          `json:"reasoning"`
+	Actions   []aiActionEntry `json:"actions,omitempty"`
 }
 
-func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv1.UpgradeAnalysis, report *analysis.Report) (int, string, error) {
+type aiActionEntry struct {
+	Type      string            `json:"type"`
+	Namespace string            `json:"namespace,omitempty"`
+	Name      string            `json:"name"`
+	Reason    string            `json:"reason"`
+	Risk      string            `json:"risk"`
+	Params    map[string]string `json:"params,omitempty"`
+}
+
+// scoreWithAI calls the configured AI provider and returns score, reasoning, actions and error.
+func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv1.UpgradeAnalysis, report *analysis.Report) (int, string, []aiActionEntry, error) {
 	apiKey, err := r.readAIAPIKey(ctx, ua)
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 
 	model := ua.Spec.AI.Model
-	prompt := buildAIPrompt(report)
+	prompt := buildAIPrompt(report, ua.Spec.AI.Remediation.Enabled)
 
+	var raw string
 	switch ua.Spec.AI.Provider {
 	case miropsv1.AIProviderOpenAI:
-		return scoreWithOpenAI(ctx, apiKey, model, prompt)
+		raw, err = callOpenAI(ctx, apiKey, model, prompt)
 	default:
-		return scoreWithAnthropic(ctx, apiKey, model, prompt)
+		raw, err = callAnthropic(ctx, apiKey, model, prompt)
 	}
+	if err != nil {
+		return 0, "", nil, err
+	}
+	return parseAIResponse(raw)
 }
 
-func scoreWithAnthropic(ctx context.Context, apiKey, model, prompt string) (int, string, error) {
+func callAnthropic(ctx context.Context, apiKey, model, prompt string) (string, error) {
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
@@ -52,15 +68,15 @@ func scoreWithAnthropic(ctx context.Context, apiKey, model, prompt string) (int,
 		},
 	})
 	if err != nil {
-		return 0, "", fmt.Errorf("calling Anthropic API: %w", err)
+		return "", fmt.Errorf("calling Anthropic API: %w", err)
 	}
 	if len(msg.Content) == 0 {
-		return 0, "", fmt.Errorf("empty response from Anthropic")
+		return "", fmt.Errorf("empty response from Anthropic")
 	}
-	return parseAIResponse(msg.Content[0].Text)
+	return msg.Content[0].Text, nil
 }
 
-func scoreWithOpenAI(ctx context.Context, apiKey, model, prompt string) (int, string, error) {
+func callOpenAI(ctx context.Context, apiKey, model, prompt string) (string, error) {
 	if model == "" {
 		model = "gpt-4o"
 	}
@@ -72,12 +88,12 @@ func scoreWithOpenAI(ctx context.Context, apiKey, model, prompt string) (int, st
 		},
 	})
 	if err != nil {
-		return 0, "", fmt.Errorf("calling OpenAI API: %w", err)
+		return "", fmt.Errorf("calling OpenAI API: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return 0, "", fmt.Errorf("empty response from OpenAI")
+		return "", fmt.Errorf("empty response from OpenAI")
 	}
-	return parseAIResponse(resp.Choices[0].Message.Content)
+	return resp.Choices[0].Message.Content, nil
 }
 
 func (r *UpgradeAnalysisReconciler) readAIAPIKey(ctx context.Context, ua *miropsv1.UpgradeAnalysis) (string, error) {
@@ -103,7 +119,7 @@ func (r *UpgradeAnalysisReconciler) readAIAPIKey(ctx context.Context, ua *mirops
 	return key, nil
 }
 
-func buildAIPrompt(report *analysis.Report) string {
+func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are a Kubernetes upgrade risk assessor. Analyze the cluster state and return an upgrade readiness score from 0 to 100.\n\n")
 	fmt.Fprintf(&b, "100 = completely safe, 0 = critical risk. Focus on semantic risks that numeric metrics miss:\n")
@@ -165,12 +181,20 @@ func buildAIPrompt(report *analysis.Report) string {
 		fmt.Fprintf(&b, "\n")
 	}
 
-	fmt.Fprintf(&b, "Respond ONLY with JSON, no markdown:\n")
-	fmt.Fprintf(&b, `{"score": <integer 0-100>, "reasoning": "<one concise paragraph>"}`)
+	if withRemediation {
+		fmt.Fprintf(&b, "Also propose remediation actions for the detected issues.\n")
+		fmt.Fprintf(&b, "Valid action types: restart-pod, scale-deployment, cordon-node, delete-pod\n")
+		fmt.Fprintf(&b, "Valid risk levels: low, medium, high\n\n")
+		fmt.Fprintf(&b, "Respond ONLY with JSON, no markdown:\n")
+		fmt.Fprintf(&b, `{"score": <integer 0-100>, "reasoning": "<one concise paragraph>", "actions": [{"type": "<type>", "namespace": "<ns>", "name": "<name>", "reason": "<why>", "risk": "<low|medium|high>"}]}`)
+	} else {
+		fmt.Fprintf(&b, "Respond ONLY with JSON, no markdown:\n")
+		fmt.Fprintf(&b, `{"score": <integer 0-100>, "reasoning": "<one concise paragraph>"}`)
+	}
 	return b.String()
 }
 
-func parseAIResponse(text string) (int, string, error) {
+func parseAIResponse(text string) (int, string, []aiActionEntry, error) {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
@@ -179,10 +203,10 @@ func parseAIResponse(text string) (int, string, error) {
 
 	var resp aiScoreResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		return 0, "", fmt.Errorf("parsing AI response: %w (raw: %s)", err, text)
+		return 0, "", nil, fmt.Errorf("parsing AI response: %w (raw: %s)", err, text)
 	}
 	if resp.Score < 0 || resp.Score > 100 {
-		return 0, "", fmt.Errorf("AI score %d out of range [0, 100]", resp.Score)
+		return 0, "", nil, fmt.Errorf("AI score %d out of range [0, 100]", resp.Score)
 	}
-	return resp.Score, resp.Reasoning, nil
+	return resp.Score, resp.Reasoning, resp.Actions, nil
 }
