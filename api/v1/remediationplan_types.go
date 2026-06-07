@@ -77,6 +77,11 @@ type RemediationAction struct {
 	// params holds type-specific parameters (e.g. replicas for scale-deployment)
 	// +optional
 	Params map[string]string `json:"params,omitempty"`
+
+	// skip prevents this action from being executed even when the plan is approved.
+	// Use this to selectively execute only some of the proposed actions.
+	// +kubebuilder:default=false
+	Skip bool `json:"skip,omitempty"`
 }
 
 // ActionResult records the outcome of an executed action

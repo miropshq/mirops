@@ -60,6 +60,11 @@ func (r *RemediationPlanReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	allOK := true
 
 	for _, action := range plan.Spec.Actions {
+		if action.Skip {
+			log.Info("Action skipped by user", "id", action.ID, "type", action.Type)
+			results = append(results, miropsv1.ActionResult{ID: action.ID, Status: "skipped"})
+			continue
+		}
 		result := r.executeAction(ctx, plan.Namespace, action)
 		results = append(results, result)
 		if result.Status == "failed" {
@@ -208,7 +213,7 @@ func (r *UpgradeAnalysisReconciler) createRemediationPlan(ctx context.Context, u
 		},
 		Spec: miropsv1.RemediationPlanSpec{
 			UpgradeAnalysisRef: ua.Name,
-			Approved:           false,
+			Approved:           ua.Spec.AI.Remediation.AutoApprove,
 			Actions:            planActions,
 		},
 	}

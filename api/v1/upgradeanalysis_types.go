@@ -36,7 +36,6 @@ const (
 type RemediationConfig struct {
 	// enabled allows the AI to propose remediation actions after scoring.
 	// When true, a RemediationPlan CR is created with the proposed actions.
-	// The plan requires manual approval (spec.approved=true) before executing.
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled"`
 
@@ -45,6 +44,11 @@ type RemediationConfig struct {
 	// +kubebuilder:default=low
 	// +kubebuilder:validation:Enum=low;medium;high
 	MaxRiskLevel RiskLevel `json:"maxRiskLevel,omitempty"`
+
+	// autoApprove executes all proposed actions immediately without manual approval.
+	// When false (default) the plan waits for spec.approved=true before executing.
+	// +kubebuilder:default=false
+	AutoApprove bool `json:"autoApprove,omitempty"`
 }
 
 // AIConfig enables AI-assisted scoring. When enabled, the final score is
