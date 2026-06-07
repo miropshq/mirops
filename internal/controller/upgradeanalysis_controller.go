@@ -233,4 +233,3 @@ func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *mirop
 		return exporter.NewFileExporter(src.Path), nil
 	}
 }
-
