@@ -37,9 +37,10 @@ import (
 
 // UpgradeAnalysisReconciler reconciles a UpgradeAnalysis object
 type UpgradeAnalysisReconciler struct {
-	Client    client.Client
-	Scheme    *runtime.Scheme
-	Collector collector.ClusterCollector
+	Client     client.Client
+	Scheme     *runtime.Scheme
+	Collector  collector.ClusterCollector
+	ReportsDir string
 }
 
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
@@ -141,18 +142,27 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Export report to configured source (default: file)
-	exp, err := r.buildExporter(ctx, ua)
-	if err != nil {
-		log.Error(err, "failed to build exporter")
+	// Always write report to the local reports directory so the HTTP server can serve it
+	// regardless of whether the configured source is file, s3, or blob.
+	localPath := r.ReportsDir + "/" + ua.Name + ".json"
+	localExp := exporter.NewFileExporter(localPath)
+	if err := localExp.Export(report); err != nil {
+		log.Error(err, "failed to write local report")
 		return ctrl.Result{}, err
 	}
-	if err := exp.Export(report); err != nil {
-		log.Error(err, "failed to export analysis report")
-		return ctrl.Result{}, err
-	}
+	log.Info("Report written locally", "path", localPath)
 
-	log.Info("Report written", "location", exp.Location())
+	// Additionally export to S3/blob if configured
+	if ua.Spec.Source.Type == miropsv1.SourceTypeS3 || ua.Spec.Source.Type == miropsv1.SourceTypeBlob {
+		cloudExp, err := r.buildExporter(ctx, ua)
+		if err != nil {
+			log.Error(err, "failed to build cloud exporter")
+		} else if err := cloudExp.Export(report); err != nil {
+			log.Error(err, "failed to export report to cloud")
+		} else {
+			log.Info("Report synced to cloud", "location", cloudExp.Location())
+		}
+	}
 
 	// Update CR status
 	ua.Status.Decision = report.Decision.Level
@@ -160,7 +170,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	ua.Status.AIScore = report.Scores.AI.Score
 	ua.Status.AIReasoning = report.AIReasoning
 	ua.Status.Reason = report.Reason
-	ua.Status.ReportPath = exp.Location()
+	ua.Status.ReportPath = localPath
 	ua.Status.LastAnalysisTime = &metav1.Time{Time: now}
 	ua.Status.LastTotalPods = snapshot.TotalPods
 	ua.Status.LastTotalRestarts = snapshot.TotalRestarts

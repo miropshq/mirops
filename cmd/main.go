@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"net/http"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -62,6 +63,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var reportsAddr string
+	var reportsDir string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -80,6 +83,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&reportsAddr, "reports-bind-address", ":8084", "The address the reports HTTP server binds to.")
+	flag.StringVar(&reportsDir, "reports-dir", "/var/mirops/reports", "Directory where analysis reports are stored.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -188,10 +193,27 @@ func main() {
 	}
 	clusterCollector := collector.NewClusterCollector(mgr.GetClient(), dc)
 
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		setupLog.Error(err, "unable to create reports directory", "dir", reportsDir)
+		os.Exit(1)
+	}
+
+	// Start reports HTTP server — serves report JSON files regardless of
+	// whether the configured source is file, s3, or blob.
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/reports/", corsMiddleware(http.StripPrefix("/reports/", http.FileServer(http.Dir(reportsDir)))))
+		setupLog.Info("starting reports server", "addr", reportsAddr, "dir", reportsDir)
+		if err := http.ListenAndServe(reportsAddr, mux); err != nil {
+			setupLog.Error(err, "reports server failed")
+		}
+	}()
+
 	if err := (&controller.UpgradeAnalysisReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Collector: clusterCollector,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Collector:  clusterCollector,
+		ReportsDir: reportsDir,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
 		os.Exit(1)
@@ -213,4 +235,17 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
