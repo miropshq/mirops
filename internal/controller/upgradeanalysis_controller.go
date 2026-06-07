@@ -114,15 +114,30 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Apply AI score if enabled (base*0.7 + ai*0.3)
 	if ua.Spec.AI.Enabled {
-		aiScore, reasoning, err := r.scoreWithAI(ctx, ua, report)
-		if err != nil {
-			log.Error(err, "AI scoring failed, proceeding with base score only")
+		aiScore, reasoning, actions, aiErr := r.scoreWithAI(ctx, ua, report)
+		if aiErr != nil {
+			log.Error(aiErr, "AI scoring failed, proceeding with base score only")
 		} else {
-			analysis.ApplyAIScore(report, aiScore, reasoning)
+			model := ua.Spec.AI.Model
+			if model == "" {
+				if ua.Spec.AI.Provider == miropsv1.AIProviderOpenAI {
+					model = "gpt-4o"
+				} else {
+					model = "claude-sonnet-4-6"
+				}
+			}
+			analysis.ApplyAIScore(report, aiScore, reasoning, model)
+			ua.Status.AIModel = model
 			log.Info("AI score applied",
 				"aiScore", aiScore,
 				"totalScore", report.Scores.Total,
+				"model", model,
 			)
+			if ua.Spec.AI.Remediation.Enabled && len(actions) > 0 {
+				if err := r.createRemediationPlan(ctx, ua, actions); err != nil {
+					log.Error(err, "failed to create RemediationPlan")
+				}
+			}
 		}
 	}
 

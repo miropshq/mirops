@@ -28,10 +28,15 @@ jobs:
       - name: Generate manifests
         run: make manifests
 
-      - name: Lint Dockerfile
+      - name: Lint Dockerfile (operator)
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: Dockerfile
+          dockerfile: Dockerfile.operator
+
+      - name: Lint Dockerfile (remediation)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.remediation
 
       - name: Lint
         run: make lint
@@ -46,7 +51,7 @@ jobs:
   # Cada runner compila y sube directamente con tag por arquitectura.
   # El job merge-dev combina ambos en un manifest list.
   build-dev:
-    name: Build (${{ matrix.platform }})
+    name: Build ${{ matrix.image }} (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     needs: ci
     strategy:
@@ -56,9 +61,23 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             tag_suffix: linux-amd64
+            image: operator
+            dockerfile: Dockerfile.operator
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             tag_suffix: linux-arm64
+            image: operator
+            dockerfile: Dockerfile.operator
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            tag_suffix: linux-amd64
+            image: remediation
+            dockerfile: Dockerfile.remediation
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            tag_suffix: linux-arm64
+            image: remediation
+            dockerfile: Dockerfile.remediation
     steps:
       - uses: actions/checkout@v4
 
@@ -76,18 +95,22 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ghcr.io/${{ github.repository }}:dev-${{ matrix.tag_suffix }}
-          cache-from: type=gha,scope=${{ matrix.tag_suffix }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.tag_suffix }}
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-${{ matrix.tag_suffix }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.tag_suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.tag_suffix }}
 
   # ─── Merge manifest list ────────────────────────────────────────────────────
   # Combina los dos tags de arquitectura en un manifest list con los tags finales.
   merge-dev:
-    name: Push dev image (merge manifest)
+    name: Push dev image (merge manifest) - ${{ matrix.image }}
     runs-on: ubuntu-latest
     needs: build-dev
+    strategy:
+      matrix:
+        image: [operator, remediation]
     steps:
       - name: Login to the Container registry
         uses: docker/login-action@v3
@@ -102,10 +125,10 @@ jobs:
       - name: Create manifest list and push
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/${{ github.repository }}:dev \
-            -t ghcr.io/${{ github.repository }}:sha-${{ github.sha }} \
-            ghcr.io/${{ github.repository }}:dev-linux-amd64 \
-            ghcr.io/${{ github.repository }}:dev-linux-arm64
+            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev \
+            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}:sha-${{ github.sha }} \
+            ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-linux-amd64 \
+            ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-linux-arm64
 
       - name: Inspect manifest
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:dev
+        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev
