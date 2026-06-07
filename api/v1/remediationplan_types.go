@@ -25,10 +25,10 @@ import (
 type ActionType string
 
 const (
-	ActionTypeRestartPod       ActionType = "restart-pod"
-	ActionTypeScaleDeployment  ActionType = "scale-deployment"
-	ActionTypeCordonNode       ActionType = "cordon-node"
-	ActionTypeDeletePod        ActionType = "delete-pod"
+	ActionTypeRestartPod      ActionType = "restart-pod"
+	ActionTypeScaleDeployment ActionType = "scale-deployment"
+	ActionTypeCordonNode      ActionType = "cordon-node"
+	ActionTypeDeletePod       ActionType = "delete-pod"
 )
 
 // RiskLevel describes the risk of a remediation action
