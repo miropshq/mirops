@@ -227,6 +227,11 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	AIModel string `json:"aiModel,omitempty"`
 
+	// aiError holds the error message if AI scoring was enabled but failed.
+	// Empty when AI scoring is disabled or succeeded.
+	// +optional
+	AIError string `json:"aiError,omitempty"`
+
 	// lastTotalPods is the pod count from the previous reconciliation, used to compute stability delta
 	// +optional
 	LastTotalPods int `json:"lastTotalPods,omitempty"`

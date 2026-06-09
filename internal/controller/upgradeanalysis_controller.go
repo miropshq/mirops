@@ -118,7 +118,9 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		aiScore, reasoning, actions, aiErr := r.scoreWithAI(ctx, ua, report)
 		if aiErr != nil {
 			log.Error(aiErr, "AI scoring failed, proceeding with base score only")
+			ua.Status.AIError = aiErr.Error()
 		} else {
+			ua.Status.AIError = ""
 			model := ua.Spec.AI.Model
 			if model == "" {
 				if ua.Spec.AI.Provider == miropsv1.AIProviderOpenAI {
