@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,9 +217,8 @@ func majorMinor(version string) (int, int) {
 	if len(parts) < 2 {
 		return 0, 0
 	}
-	var maj, min int
-	fmt.Sscanf(parts[0], "%d", &maj)
-	fmt.Sscanf(parts[1], "%d", &min)
+	maj, _ := strconv.Atoi(parts[0])
+	min, _ := strconv.Atoi(parts[1])
 	return maj, min
 }
 
