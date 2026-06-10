@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -101,6 +102,26 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		"resourceCount", len(snapshot.Resources),
 	)
 
+	// Reject invalid configuration: target version must be higher than the current
+	// cluster version. This is a user config error, not an analysis decision, so it
+	// sets decision=ERROR (distinct from the SAFE/WARNING/BLOCK analysis results)
+	// and stops without running the analysis.
+	if !versionIsHigher(ua.Spec.TargetVersion, snapshot.ClusterVersion) {
+		tMaj, tMin := majorMinor(ua.Spec.TargetVersion)
+		cMaj, cMin := majorMinor(snapshot.ClusterVersion)
+		ua.Status.Decision = "ERROR"
+		if tMaj == cMaj && tMin == cMin {
+			ua.Status.Reason = fmt.Sprintf("cluster is already running version %s — targetVersion must be higher than the current version", snapshot.ClusterVersion)
+		} else {
+			ua.Status.Reason = fmt.Sprintf("targetVersion %s is lower than current cluster version %s — downgrades are not supported", ua.Spec.TargetVersion, snapshot.ClusterVersion)
+		}
+		ua.Status.LastAnalysisTime = &metav1.Time{Time: time.Now().UTC()}
+		if err := r.Client.Status().Update(ctx, ua); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Calculate upgrade readiness score
 	report := analysis.Calculate(snapshot, ua.Spec.TargetVersion)
 	now := time.Now().UTC()
@@ -117,8 +138,8 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if ua.Spec.AI.Enabled {
 		aiScore, reasoning, actions, aiErr := r.scoreWithAI(ctx, ua, report)
 		if aiErr != nil {
-			log.Error(aiErr, "AI scoring failed, proceeding with base score only")
-			ua.Status.AIError = aiErr.Error()
+			ua.Status.AIError = classifyAIError(ua.Spec.AI.Provider, aiErr)
+			log.Error(aiErr, "AI scoring failed, proceeding with base score only", "aiError", ua.Status.AIError)
 		} else {
 			ua.Status.AIError = ""
 			model := ua.Spec.AI.Model
@@ -186,6 +207,29 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: interval}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// majorMinor parses major and minor from a version string like "v1.30.1" or "1.30".
+func majorMinor(version string) (int, int) {
+	v := strings.TrimPrefix(version, "v")
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 {
+		return 0, 0
+	}
+	var maj, min int
+	fmt.Sscanf(parts[0], "%d", &maj)
+	fmt.Sscanf(parts[1], "%d", &min)
+	return maj, min
+}
+
+// versionIsHigher returns true if target is strictly greater than current (major.minor only).
+func versionIsHigher(target, current string) bool {
+	tMaj, tMin := majorMinor(target)
+	cMaj, cMin := majorMinor(current)
+	if tMaj != cMaj {
+		return tMaj > cMaj
+	}
+	return tMin > cMin
 }
 
 // SetupWithManager sets up the controller with the Manager.

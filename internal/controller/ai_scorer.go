@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -192,6 +193,76 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, `{"score": <integer 0-100>, "reasoning": "<one concise paragraph>"}`)
 	}
 	return b.String()
+}
+
+// classifyAIError turns a raw SDK/API error into a clear, user-facing message that
+// explains the cause (invalid API key, insufficient credit, rate limit, missing model,
+// etc.). It falls back to the raw error for non-API errors (config, parsing, network).
+func classifyAIError(provider miropsv1.AIProvider, err error) string {
+	if err == nil {
+		return ""
+	}
+
+	switch provider {
+	case miropsv1.AIProviderOpenAI:
+		var oe *openai.Error
+		if errors.As(err, &oe) {
+			return formatAPIError("OpenAI", oe.StatusCode, oe.Type, oe.Message)
+		}
+	default:
+		var ae *anthropic.Error
+		if errors.As(err, &ae) {
+			return formatAPIError("Anthropic", ae.StatusCode, string(ae.Type()), extractAnthropicMessage(ae.RawJSON()))
+		}
+	}
+
+	// Not a structured API error (e.g. missing secret, JSON parse error, network failure)
+	return err.Error()
+}
+
+// formatAPIError maps an HTTP status / error type / message into a human-readable cause.
+func formatAPIError(provider string, status int, errType, message string) string {
+	lowerMsg := strings.ToLower(message)
+	var category string
+	switch {
+	case status == 401 || strings.Contains(errType, "authentication"):
+		category = "invalid or unauthorized API key"
+	case status == 403 || strings.Contains(errType, "permission"):
+		category = "permission denied for this model or account"
+	case strings.Contains(lowerMsg, "credit") || strings.Contains(lowerMsg, "billing") || strings.Contains(lowerMsg, "quota") || strings.Contains(lowerMsg, "insufficient"):
+		category = "insufficient credit/quota on the AI account"
+	case status == 429 || strings.Contains(errType, "rate_limit"):
+		category = "rate limit exceeded — retry later"
+	case status == 404 || strings.Contains(errType, "not_found"):
+		category = "model not found — check spec.ai.model"
+	case status == 529 || strings.Contains(errType, "overloaded"):
+		category = "AI service overloaded — retry later"
+	case status >= 500:
+		category = "AI service internal error"
+	default:
+		category = "AI API call failed"
+	}
+
+	if message != "" {
+		return fmt.Sprintf("%s: %s [%s HTTP %d]", category, message, provider, status)
+	}
+	return fmt.Sprintf("%s [%s HTTP %d]", category, provider, status)
+}
+
+// extractAnthropicMessage pulls the human-readable message out of the Anthropic error body.
+func extractAnthropicMessage(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &body); err == nil {
+		return body.Error.Message
+	}
+	return ""
 }
 
 func parseAIResponse(text string) (int, string, []aiActionEntry, error) {
