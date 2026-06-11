@@ -34,7 +34,9 @@ import (
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/analysis"
 	"github.com/miropshq/mirops/internal/collector"
+	"github.com/miropshq/mirops/internal/compat"
 	"github.com/miropshq/mirops/internal/exporter"
+	"github.com/miropshq/mirops/internal/graph"
 )
 
 // UpgradeAnalysisReconciler reconciles a UpgradeAnalysis object
@@ -52,6 +54,9 @@ type UpgradeAnalysisReconciler struct {
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
@@ -123,16 +128,43 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
+	// Mirops engine — Compatibility: evaluate detected add-ons against the target version
+	// BEFORE scoring so incompatible add-ons feed the risk score (AddonIssues).
+	matrix, err := r.loadCompatMatrix(ctx, ua.Namespace)
+	if err != nil {
+		log.Error(err, "failed to load compatibility matrix, using built-in defaults")
+		matrix = compat.DefaultMatrix()
+	}
+	addonResults, incompatible := compat.Evaluate(snapshot.DetectedAddons, ua.Spec.TargetVersion, matrix)
+	snapshot.AddonIssues = incompatible
+
 	// Calculate upgrade readiness score
 	report := analysis.Calculate(snapshot, ua.Spec.TargetVersion)
 	now := time.Now().UTC()
 	report.GeneratedAt = now.Format(time.RFC3339)
 	report.Cluster = ua.Name
 
+	// Mirops engine — Mirror + Dependency Graph + Risk. Build the logical graph, seed
+	// risk from add-on compatibility, propagate along edges, and attach to the report.
+	addonStatus := make(map[string]string, len(addonResults))
+	for _, a := range addonResults {
+		addonStatus[a.Name] = a.Status
+	}
+	g := graph.BuildFromSnapshot(snapshot)
+	nsRisk := g.ApplyRisk(addonStatus)
+	report.Addons = addonResults
+	report.Graph = g
+	report.Risk = &analysis.RiskBreakdown{ByNamespace: nsRisk}
+
+	ua.Status.AddonsChecked = len(addonResults)
+	ua.Status.IncompatibleAddons = incompatible
+
 	log.Info("Analysis completed",
 		"decision", report.Decision.Level,
 		"baseScore", report.Scores.Base.Score,
 		"reason", report.Reason,
+		"addonsChecked", len(addonResults),
+		"incompatibleAddons", incompatible,
 	)
 
 	// Apply AI score if enabled (base*0.7 + ai*0.3)
@@ -237,6 +269,21 @@ func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&miropsv1.UpgradeAnalysis{}).
 		Complete(r)
+}
+
+// compatMatrixConfigMap is the optional ConfigMap (in the analysis namespace) whose
+// "matrix.yaml" key overrides the built-in add-on compatibility matrix.
+const compatMatrixConfigMap = "mirops-compatibility-matrix"
+
+// loadCompatMatrix returns the built-in matrix overlaid with the optional ConfigMap
+// override. A missing ConfigMap is not an error — the built-in defaults are used.
+func (r *UpgradeAnalysisReconciler) loadCompatMatrix(ctx context.Context, namespace string) (compat.Matrix, error) {
+	cm := &corev1.ConfigMap{}
+	err := r.Client.Get(ctx, types.NamespacedName{Name: compatMatrixConfigMap, Namespace: namespace}, cm)
+	if err != nil {
+		return compat.DefaultMatrix(), nil
+	}
+	return compat.LoadMatrix([]byte(cm.Data["matrix.yaml"]))
 }
 
 // buildExporter selects and configures the right exporter based on source.type.

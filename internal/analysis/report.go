@@ -1,5 +1,10 @@
 package analysis
 
+import (
+	"github.com/miropshq/mirops/internal/compat"
+	"github.com/miropshq/mirops/internal/graph"
+)
+
 // Report is the full JSON output written to the source destination
 // and consumed by mirops-cli via --source flag.
 // Field order: identity → verdict → scores → conditions → metrics → workloads → issues (verbose last).
@@ -16,6 +21,18 @@ type Report struct {
 	Metrics        Metrics         `json:"metrics"`
 	Workloads      ReportWorkloads `json:"workloads"`
 	Issues         []string        `json:"issues,omitempty"`
+
+	// Mirops engine output (logical mirror): add-on compatibility, dependency graph,
+	// and per-namespace risk. Populated by the controller after the base analysis.
+	Addons []compat.AddonCompatibility `json:"addons,omitempty"`
+	Graph  *graph.Graph                `json:"graph,omitempty"`
+	Risk   *RiskBreakdown              `json:"risk,omitempty"`
+}
+
+// RiskBreakdown holds the engine's per-namespace risk aggregation. Per-component risk
+// lives on each node inside Graph.
+type RiskBreakdown struct {
+	ByNamespace []graph.NamespaceRisk `json:"byNamespace,omitempty"`
 }
 
 // ReportWorkloads groups cluster resources by kind for easy inspection.

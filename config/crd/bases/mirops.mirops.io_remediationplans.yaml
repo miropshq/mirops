@@ -1,0 +1,175 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: remediationplans.mirops.mirops.io
+spec:
+  group: mirops.mirops.io
+  names:
+    kind: RemediationPlan
+    listKind: RemediationPlanList
+    plural: remediationplans
+    singular: remediationplan
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.upgradeAnalysisRef
+      name: Analysis
+      type: string
+    - jsonPath: .spec.approved
+      name: Approved
+      type: boolean
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          RemediationPlan is created by the operator when AI proposes fixes.
+          Set spec.approved to true to execute the actions.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: RemediationPlanSpec defines the desired state of RemediationPlan
+            properties:
+              actions:
+                description: actions is the list of remediation actions proposed by
+                  the AI
+                items:
+                  description: RemediationAction describes a single action proposed
+                    by the AI
+                  properties:
+                    id:
+                      description: id is a unique identifier for this action
+                      type: string
+                    name:
+                      description: name is the name of the target resource
+                      type: string
+                    namespace:
+                      description: namespace is the namespace of the target resource
+                      type: string
+                    params:
+                      additionalProperties:
+                        type: string
+                      description: params holds type-specific parameters (e.g. replicas
+                        for scale-deployment)
+                      type: object
+                    reason:
+                      description: reason is the AI explanation for why this action
+                        is needed
+                      type: string
+                    risk:
+                      default: low
+                      description: risk is the assessed risk level of this action
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      type: string
+                    skip:
+                      default: false
+                      description: |-
+                        skip prevents this action from being executed even when the plan is approved.
+                        Use this to selectively execute only some of the proposed actions.
+                      type: boolean
+                    type:
+                      description: type is the kind of action to perform
+                      enum:
+                      - restart-pod
+                      - scale-deployment
+                      - cordon-node
+                      - delete-pod
+                      type: string
+                  required:
+                  - id
+                  - name
+                  - reason
+                  - risk
+                  - type
+                  type: object
+                type: array
+              approved:
+                default: false
+                description: approved must be set to true by the user to allow execution
+                type: boolean
+              upgradeAnalysisRef:
+                description: upgradeAnalysisRef is the name of the UpgradeAnalysis
+                  that generated this plan
+                type: string
+            required:
+            - actions
+            - approved
+            - upgradeAnalysisRef
+            type: object
+          status:
+            description: RemediationPlanStatus defines the observed state of RemediationPlan
+            properties:
+              completedAt:
+                description: completedAt is when all actions finished
+                format: date-time
+                type: string
+              executedAt:
+                description: executedAt is when execution started
+                format: date-time
+                type: string
+              phase:
+                description: phase is the current state of the plan
+                enum:
+                - pending-approval
+                - running
+                - completed
+                - failed
+                type: string
+              results:
+                description: results holds the outcome of each executed action
+                items:
+                  description: ActionResult records the outcome of an executed action
+                  properties:
+                    error:
+                      description: error holds the error message if status is failed
+                      type: string
+                    executedAt:
+                      description: executedAt is when the action was attempted
+                      format: date-time
+                      type: string
+                    id:
+                      description: id matches the RemediationAction ID
+                      type: string
+                    status:
+                      description: status is success, failed, or skipped
+                      type: string
+                  required:
+                  - id
+                  - status
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

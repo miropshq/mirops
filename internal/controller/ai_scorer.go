@@ -127,7 +127,8 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 	fmt.Fprintf(&b, "- Workload criticality from names (postgres, kafka, payment suggest production data)\n")
 	fmt.Fprintf(&b, "- Data loss risk during node drain for stateful workloads\n")
 	fmt.Fprintf(&b, "- Active jobs or migrations that would be interrupted\n")
-	fmt.Fprintf(&b, "- Correlated failures across workloads\n\n")
+	fmt.Fprintf(&b, "- Correlated failures across workloads\n")
+	fmt.Fprintf(&b, "- Add-on incompatibility with the target version and what depends on those add-ons (see ADD-ON COMPATIBILITY and KEY DEPENDENCIES). Treat the rule-based compatibility as a hint: confirm it and flag add-ons or dependency chains the rules may have missed.\n\n")
 
 	fmt.Fprintf(&b, "CLUSTER:\n")
 	fmt.Fprintf(&b, "Current version: %s | Target: %s\n", report.ClusterVersion, report.TargetVersion)
@@ -178,6 +179,43 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, "DEPRECATED APIS:\n")
 		for _, api := range report.Workloads.DeprecatedAPIs {
 			fmt.Fprintf(&b, "- %s (%s) removed in k8s %s\n", api.Resource, api.Version, api.RemovedIn)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	// Mirops engine context: add-on compatibility, dependency graph and risk give the AI
+	// a logical mirror of the cluster to reason over, instead of raw metrics alone.
+	if len(report.Addons) > 0 {
+		fmt.Fprintf(&b, "ADD-ON COMPATIBILITY (rule-based, verify and add semantic judgement):\n")
+		for _, a := range report.Addons {
+			line := fmt.Sprintf("- %s %s: %s", a.Name, a.Version, a.Status)
+			if a.RequiredVersion != "" {
+				line += fmt.Sprintf(" (supported on k8s %s)", a.RequiredVersion)
+			}
+			fmt.Fprintf(&b, "%s\n", line)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	if report.Risk != nil && len(report.Risk.ByNamespace) > 0 {
+		fmt.Fprintf(&b, "RISK BY NAMESPACE (0-100, higher = riskier):\n")
+		for _, ns := range report.Risk.ByNamespace {
+			fmt.Fprintf(&b, "- %s: risk %d (%d/%d components at risk)\n", ns.Namespace, ns.Risk, ns.AtRisk, ns.Components)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	if report.Graph != nil && len(report.Graph.Edges) > 0 {
+		fmt.Fprintf(&b, "KEY DEPENDENCIES (what breaks if a component is disrupted):\n")
+		shown := 0
+		for _, e := range report.Graph.Edges {
+			if e.Type != "depends-on" {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s %s %s\n", e.From, e.Type, e.To)
+			if shown++; shown >= 20 {
+				break
+			}
 		}
 		fmt.Fprintf(&b, "\n")
 	}

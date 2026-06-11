@@ -43,11 +43,15 @@ type NodeWorkload struct {
 
 // DeploymentWorkload represents a deployment with its pod details
 type DeploymentWorkload struct {
-	Namespace       string        `json:"namespace"`
-	Name            string        `json:"name"`
-	ReadyReplicas   int32         `json:"readyReplicas"`
-	DesiredReplicas int32         `json:"desiredReplicas"`
-	Pods            []WorkloadPod `json:"pods,omitempty"`
+	Namespace        string            `json:"namespace"`
+	Name             string            `json:"name"`
+	ReadyReplicas    int32             `json:"readyReplicas"`
+	DesiredReplicas  int32             `json:"desiredReplicas"`
+	Pods             []WorkloadPod     `json:"pods,omitempty"`
+	PodLabels        map[string]string `json:"-"` // pod-template labels, for Service selector matching
+	ConfigRefs       []ConfigRef       `json:"-"` // ConfigMaps/Secrets consumed
+	Nodes            []string          `json:"-"` // nodes the pods are scheduled on
+	UsesIstioSidecar bool              `json:"-"` // pod template requests istio injection
 }
 
 // StatefulSetIssue describes a StatefulSet that is not fully ready
@@ -83,6 +87,36 @@ type DeprecatedAPI struct {
 	RemovedIn string // k8s version when it's removed
 }
 
+// ServiceRef represents a Service for the dependency graph.
+type ServiceRef struct {
+	Namespace string
+	Name      string
+	Type      string            // ClusterIP, NodePort, LoadBalancer, ExternalName
+	Selector  map[string]string // matches pod labels of the backing workload
+}
+
+// IngressRef represents an Ingress and the Services it routes to.
+type IngressRef struct {
+	Namespace string
+	Name      string
+	Services  []string // backend service names
+	HasTLS    bool     // signals a likely cert-manager dependency
+}
+
+// ConfigRef is a ConfigMap or Secret a workload consumes.
+type ConfigRef struct {
+	Kind string // "ConfigMap" | "Secret"
+	Name string
+}
+
+// DetectedAddon is a recognized cluster add-on and the version found.
+type DetectedAddon struct {
+	Name        string // istio, cert-manager, argocd, prometheus, ingress-nginx, ...
+	Version     string // from app.kubernetes.io/version label or image tag; "" if unknown
+	Namespace   string
+	DetectedVia string // "crd" | "deployment" | "namespace"
+}
+
 type ClusterSnapshot struct {
 	ClusterName    string
 	ClusterVersion string
@@ -112,6 +146,11 @@ type ClusterSnapshot struct {
 	AddonIssues       int
 	PDBBlocking       bool
 	PDBIssues         []PDBIssue
+
+	// Mirror / dependency-graph inputs
+	Services       []ServiceRef
+	Ingresses      []IngressRef
+	DetectedAddons []DetectedAddon
 
 	// Workload hierarchy (for report workloads section)
 	NodeWorkloads       []NodeWorkload

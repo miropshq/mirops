@@ -232,6 +232,14 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	AIError string `json:"aiError,omitempty"`
 
+	// addonsChecked is the number of cluster add-ons evaluated for compatibility.
+	// +optional
+	AddonsChecked int `json:"addonsChecked,omitempty"`
+
+	// incompatibleAddons is the number of add-ons found incompatible with targetVersion.
+	// +optional
+	IncompatibleAddons int `json:"incompatibleAddons,omitempty"`
+
 	// lastTotalPods is the pod count from the previous reconciliation, used to compute stability delta
 	// +optional
 	LastTotalPods int `json:"lastTotalPods,omitempty"`

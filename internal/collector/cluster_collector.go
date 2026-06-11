@@ -161,8 +161,17 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		return nil, err
 	}
 
+	// Collect Services and Ingresses (dependency-graph inputs)
+	if err := c.collectServices(ctx, excluded, snapshot); err != nil {
+		return nil, err
+	}
+	c.collectIngresses(ctx, excluded, snapshot)
+
 	// Detect deprecated API usage
 	c.detectDeprecatedAPIs(snapshot)
+
+	// Detect installed add-ons (Istio, Cert Manager, ArgoCD, ...) for the compatibility engine
+	c.detectAddons(ctx, snapshot)
 
 	return snapshot, nil
 }
@@ -201,11 +210,14 @@ func (c *DefaultClusterCollector) collectDeployments(ctx context.Context, exclud
 		}
 		key := dep.Namespace + "/" + dep.Name
 		snapshot.DeploymentWorkloads = append(snapshot.DeploymentWorkloads, DeploymentWorkload{
-			Namespace:       dep.Namespace,
-			Name:            dep.Name,
-			ReadyReplicas:   dep.Status.ReadyReplicas,
-			DesiredReplicas: desired,
-			Pods:            podsByDeployment[key],
+			Namespace:        dep.Namespace,
+			Name:             dep.Name,
+			ReadyReplicas:    dep.Status.ReadyReplicas,
+			DesiredReplicas:  desired,
+			Pods:             podsByDeployment[key],
+			PodLabels:        dep.Spec.Template.Labels,
+			ConfigRefs:       podSpecConfigRefs(&dep.Spec.Template.Spec),
+			UsesIstioSidecar: usesIstioSidecar(dep.Spec.Template.Labels, dep.Spec.Template.Annotations),
 		})
 	}
 	return nil
