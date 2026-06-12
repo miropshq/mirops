@@ -11,8 +11,8 @@ import (
 func TestApplyRiskPropagation(t *testing.T) {
 	snap := &collector.ClusterSnapshot{
 		DetectedAddons: []collector.DetectedAddon{{Name: "istio", Version: "1.21.0"}},
-		DeploymentWorkloads: []collector.DeploymentWorkload{{
-			Namespace: "shop", Name: "frontend", ReadyReplicas: 2, DesiredReplicas: 2,
+		Workloads: []collector.Workload{{
+			Kind: "Deployment", Namespace: "shop", Name: "frontend", Status: "Healthy",
 			PodLabels: map[string]string{"app": "frontend"}, UsesIstioSidecar: true,
 		}},
 	}
@@ -51,8 +51,8 @@ func TestApplyRiskPropagation(t *testing.T) {
 func TestApplyRiskCompatibleAddon(t *testing.T) {
 	snap := &collector.ClusterSnapshot{
 		DetectedAddons: []collector.DetectedAddon{{Name: "istio", Version: "1.24.0"}},
-		DeploymentWorkloads: []collector.DeploymentWorkload{{
-			Namespace: "shop", Name: "frontend", ReadyReplicas: 2, DesiredReplicas: 2,
+		Workloads: []collector.Workload{{
+			Kind: "Deployment", Namespace: "shop", Name: "frontend", Status: "Healthy",
 			PodLabels: map[string]string{"app": "frontend"}, UsesIstioSidecar: true,
 		}},
 	}

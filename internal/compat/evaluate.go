@@ -1,6 +1,7 @@
 package compat
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/blang/semver/v4"
@@ -74,11 +75,29 @@ func evaluateAddon(a collector.DetectedAddon, target semver.Version, targetOK bo
 		}
 	}
 
-	// Otherwise incompatible — surface the required k8s range from the first applicable rule.
+	// Incompatible: the detected version does not support the target. Do an inverse lookup
+	// across ALL rules for this add-on to recommend the version to upgrade TO.
 	res.Status = StatusIncompatible
-	res.RequiredVersion = applicable[0].K8sRange
-	res.Note = applicable[0].Note
+	res.RequiredVersion = requiredAddonVersion(rules, target)
+	if res.RequiredVersion != "" {
+		res.Note = fmt.Sprintf("current version supports k8s %s; upgrade to add-on %s for the target version",
+			applicable[0].K8sRange, res.RequiredVersion)
+	} else {
+		res.Note = fmt.Sprintf("current version supports k8s %s; no known add-on version supports the target version",
+			applicable[0].K8sRange)
+	}
 	return res
+}
+
+// requiredAddonVersion returns the add-on version range whose rule supports the target
+// Kubernetes version, i.e. the version the operator should upgrade the add-on to.
+func requiredAddonVersion(rules []CompatRule, target semver.Version) string {
+	for _, rule := range rules {
+		if kr, err := semver.ParseRange(rule.K8sRange); err == nil && kr(target) {
+			return rule.AddonRange
+		}
+	}
+	return ""
 }
 
 // parseSemver normalizes a Kubernetes/add-on version string into a semver.Version.

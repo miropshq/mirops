@@ -7,19 +7,22 @@ package graph
 type ComponentType string
 
 const (
-	TypeWorkload ComponentType = "workload" // Deployment, StatefulSet, DaemonSet, Job
+	TypeWorkload ComponentType = "workload" // Deployment, StatefulSet, DaemonSet, Job, CronJob
 	TypeNetwork  ComponentType = "network"  // Service, Ingress
 	TypeAddon    ComponentType = "addon"    // Istio, Cert Manager, ...
 	TypeConfig   ComponentType = "config"   // ConfigMap, Secret
+	TypeStorage  ComponentType = "storage"  // PersistentVolumeClaim
 	TypeInfra    ComponentType = "infra"    // Node
 )
 
 // Edge relationship types.
 const (
-	EdgeRoutesTo   = "routes-to"   // Ingress -> Service
-	EdgeSelects    = "selects"     // Service -> workload
-	EdgeUsesConfig = "uses-config" // workload -> ConfigMap/Secret
-	EdgeDependsOn  = "depends-on"  // workload/ingress -> add-on
+	EdgeRoutesTo    = "routes-to"    // Ingress -> Service
+	EdgeSelects     = "selects"      // Service -> workload
+	EdgeUsesConfig  = "uses-config"  // workload -> ConfigMap/Secret
+	EdgeUsesStorage = "uses-storage" // workload -> PVC
+	EdgeRunsOn      = "runs-on"      // workload -> Node
+	EdgeDependsOn   = "depends-on"   // workload/ingress -> add-on
 )
 
 // Component is a logical node in the cluster mirror.

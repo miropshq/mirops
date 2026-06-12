@@ -41,6 +41,30 @@ type NodeWorkload struct {
 	Conditions []string `json:"conditions,omitempty"`
 }
 
+// Workload is a generic, fully-enumerated workload used to build the logical mirror.
+// Unlike the *Issue structs (only populated on problems), every workload of every kind is
+// captured here — healthy or not — so the dependency graph is a complete mirror.
+type Workload struct {
+	Kind             string // Deployment | StatefulSet | DaemonSet | Job | CronJob
+	Namespace        string
+	Name             string
+	Status           string            // derived, kind-specific
+	PodLabels        map[string]string // pod-template labels, for Service selector matching
+	ConfigRefs       []ConfigRef       // ConfigMaps/Secrets consumed
+	PVCs             []string          // PersistentVolumeClaim names consumed
+	Nodes            []string          // nodes the workload's pods are scheduled on
+	UsesIstioSidecar bool
+}
+
+// PVCRef represents a PersistentVolumeClaim for the dependency graph (stateful data at
+// risk during a node drain).
+type PVCRef struct {
+	Namespace    string
+	Name         string
+	StorageClass string
+	Phase        string // Bound | Pending | Lost
+}
+
 // DeploymentWorkload represents a deployment with its pod details
 type DeploymentWorkload struct {
 	Namespace        string            `json:"namespace"`
@@ -151,6 +175,8 @@ type ClusterSnapshot struct {
 	Services       []ServiceRef
 	Ingresses      []IngressRef
 	DetectedAddons []DetectedAddon
+	Workloads      []Workload // all workloads, every kind, healthy or not
+	PVCs           []PVCRef
 
 	// Workload hierarchy (for report workloads section)
 	NodeWorkloads       []NodeWorkload

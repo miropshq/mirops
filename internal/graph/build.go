@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"fmt"
-
 	"github.com/miropshq/mirops/internal/collector"
 )
 
@@ -19,13 +17,14 @@ func BuildFromSnapshot(snap *collector.ClusterSnapshot) *Graph {
 	// 1. Nodes
 	b.addAddons(snap)    // Addon/*
 	b.addInfra(snap)     // Node/*
-	b.addWorkloads(snap) // Deployment/*, StatefulSet/*, DaemonSet/*
+	b.addWorkloads(snap) // Deployment/*, StatefulSet/*, DaemonSet/*, Job/*, CronJob/*
 	b.addNetwork(snap)   // Service/*, Ingress/*
+	b.addStorage(snap)   // PVC/*
 
 	// 2. Edges
 	b.linkIngresses(snap) // Ingress -> Service, Ingress(TLS) -> cert-manager
 	b.linkServices(snap)  // Service -> workload (selector match)
-	b.linkWorkloads()     // workload -> config, workload -> istio
+	b.linkWorkloads()     // workload -> config/storage/node/istio
 
 	return &Graph{Nodes: b.nodes, Edges: b.edges}
 }
@@ -36,6 +35,8 @@ type workloadRef struct {
 	namespace string
 	labels    map[string]string
 	refs      []collector.ConfigRef
+	pvcs      []string
+	nodes     []string
 	istio     bool
 }
 
@@ -88,22 +89,16 @@ func (b *builder) addInfra(snap *collector.ClusterSnapshot) {
 }
 
 func (b *builder) addWorkloads(snap *collector.ClusterSnapshot) {
-	for _, d := range snap.DeploymentWorkloads {
-		nid := id("Deployment", d.Namespace, d.Name)
+	for _, w := range snap.Workloads {
+		nid := id(w.Kind, w.Namespace, w.Name)
 		b.addNode(Component{
-			ID: nid, Kind: "Deployment", Name: d.Name, Namespace: d.Namespace,
-			Type: TypeWorkload, Status: workloadStatus(d.ReadyReplicas, d.DesiredReplicas),
+			ID: nid, Kind: w.Kind, Name: w.Name, Namespace: w.Namespace,
+			Type: TypeWorkload, Status: w.Status,
 		})
 		b.workloads = append(b.workloads, workloadRef{
-			id: nid, namespace: d.Namespace, labels: d.PodLabels, refs: d.ConfigRefs, istio: d.UsesIstioSidecar,
+			id: nid, namespace: w.Namespace, labels: w.PodLabels,
+			refs: w.ConfigRefs, pvcs: w.PVCs, nodes: w.Nodes, istio: w.UsesIstioSidecar,
 		})
-	}
-	// Problematic StatefulSets / DaemonSets are also surfaced as workload nodes.
-	for _, s := range snap.StatefulSetIssues {
-		b.addNode(Component{ID: id("StatefulSet", s.Namespace, s.Name), Kind: "StatefulSet", Name: s.Name, Namespace: s.Namespace, Type: TypeWorkload, Status: "Degraded"})
-	}
-	for _, ds := range snap.DaemonSetIssues {
-		b.addNode(Component{ID: id("DaemonSet", ds.Namespace, ds.Name), Kind: "DaemonSet", Name: ds.Name, Namespace: ds.Namespace, Type: TypeWorkload, Status: "Degraded"})
 	}
 }
 
@@ -113,6 +108,12 @@ func (b *builder) addNetwork(snap *collector.ClusterSnapshot) {
 	}
 	for _, ing := range snap.Ingresses {
 		b.addNode(Component{ID: id("Ingress", ing.Namespace, ing.Name), Kind: "Ingress", Name: ing.Name, Namespace: ing.Namespace, Type: TypeNetwork})
+	}
+}
+
+func (b *builder) addStorage(snap *collector.ClusterSnapshot) {
+	for _, p := range snap.PVCs {
+		b.addNode(Component{ID: id("PVC", p.Namespace, p.Name), Kind: "PVC", Name: p.Name, Namespace: p.Namespace, Type: TypeStorage, Status: p.Phase})
 	}
 }
 
@@ -153,6 +154,12 @@ func (b *builder) linkWorkloads() {
 			b.addNode(Component{ID: cid, Kind: ref.Kind, Name: ref.Name, Namespace: w.namespace, Type: TypeConfig})
 			b.addEdge(w.id, cid, EdgeUsesConfig)
 		}
+		for _, claim := range w.pvcs {
+			b.addEdge(w.id, id("PVC", w.namespace, claim), EdgeUsesStorage)
+		}
+		for _, node := range w.nodes {
+			b.addEdge(w.id, id("Node", "", node), EdgeRunsOn)
+		}
 		if w.istio {
 			if is, ok := b.addonID["istio"]; ok {
 				b.addEdge(w.id, is, EdgeDependsOn)
@@ -162,20 +169,6 @@ func (b *builder) linkWorkloads() {
 }
 
 // --- Helpers ---------------------------------------------------------------
-
-// workloadStatus derives a coarse status from ready vs desired replicas.
-func workloadStatus(ready, desired int32) string {
-	switch {
-	case desired == 0:
-		return "Scaled to zero"
-	case ready >= desired:
-		return "Healthy"
-	case ready == 0:
-		return "Down"
-	default:
-		return fmt.Sprintf("Degraded (%d/%d)", ready, desired)
-	}
-}
 
 // labelsMatch reports whether every selector key/value is present in labels.
 func labelsMatch(selector, labels map[string]string) bool {

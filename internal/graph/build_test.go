@@ -13,10 +13,11 @@ func TestBuildFromSnapshot(t *testing.T) {
 			{Name: "cert-manager", Version: "1.17.0"},
 		},
 		NodeWorkloads: []collector.NodeWorkload{{Name: "node-1", Status: "Ready"}},
-		DeploymentWorkloads: []collector.DeploymentWorkload{{
-			Namespace: "shop", Name: "frontend", ReadyReplicas: 2, DesiredReplicas: 2,
+		Workloads: []collector.Workload{{
+			Kind: "Deployment", Namespace: "shop", Name: "frontend", Status: "Healthy",
 			PodLabels:        map[string]string{"app": "frontend"},
 			ConfigRefs:       []collector.ConfigRef{{Kind: "ConfigMap", Name: "frontend-config"}},
+			Nodes:            []string{"node-1"},
 			UsesIstioSidecar: true,
 		}},
 		Services: []collector.ServiceRef{{

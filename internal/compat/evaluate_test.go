@@ -60,6 +60,21 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+// TestRequiredVersionInverseLookup verifies the Istio 1.20 → k8s 1.34 case: incompatible,
+// and requiredVersion recommends the add-on version to upgrade to (>=1.24.0).
+func TestRequiredVersionInverseLookup(t *testing.T) {
+	m := DefaultMatrix()
+	results, _ := Evaluate([]collector.DetectedAddon{{Name: "istio", Version: "1.20.0"}}, "1.34", m)
+
+	r := results[0]
+	if r.Status != StatusIncompatible {
+		t.Fatalf("status = %q, want incompatible", r.Status)
+	}
+	if r.RequiredVersion != ">=1.24.0" {
+		t.Errorf("requiredVersion = %q, want %q (upgrade target add-on version)", r.RequiredVersion, ">=1.24.0")
+	}
+}
+
 func TestEvaluateCountsIncompatible(t *testing.T) {
 	m := DefaultMatrix()
 	addons := []collector.DetectedAddon{

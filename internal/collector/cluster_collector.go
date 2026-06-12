@@ -65,6 +65,10 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	podsByDaemonSet := make(map[string][]WorkloadPod)
 	podsByJob := make(map[string][]WorkloadPod)
 
+	// nodesByWorkload maps a logical workload key ("Kind/namespace/name") to the set of
+	// nodes its pods run on, for workload→Node (runs-on) edges in the mirror.
+	nodesByWorkload := make(map[string]map[string]bool)
+
 	// Collect pods across all (non-excluded) namespaces
 	podList := &corev1.PodList{}
 	if err := c.Client.List(ctx, podList); err != nil {
@@ -89,37 +93,20 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 			}
 		}
 
-		ready := isPodReady(&pod)
-		var reason string
-		if !ready {
+		// Record which node this pod runs on, attributed to its logical workload.
+		recordPodNode(&pod, rsToDeploy, nodesByWorkload)
+
+		if !isPodReady(&pod) {
 			snapshot.NotReadyPods++
-			reason = podNotReadyReason(&pod)
+			reason := podNotReadyReason(&pod)
 			snapshot.PodIssues = append(snapshot.PodIssues, PodIssue{
 				Namespace: pod.Namespace,
 				Name:      pod.Name,
 				Reason:    reason,
 				Restarts:  restarts,
 			})
-			// Group not-ready pod under its parent workload
 			wp := WorkloadPod{Name: pod.Name, Reason: reason, Restarts: restarts}
-			for _, ref := range pod.OwnerReferences {
-				switch ref.Kind {
-				case "ReplicaSet":
-					if dName, ok := rsToDeploy[pod.Namespace+"/"+ref.Name]; ok {
-						key := pod.Namespace + "/" + dName
-						podsByDeployment[key] = append(podsByDeployment[key], wp)
-					}
-				case "StatefulSet":
-					key := pod.Namespace + "/" + ref.Name
-					podsByStatefulSet[key] = append(podsByStatefulSet[key], wp)
-				case "DaemonSet":
-					key := pod.Namespace + "/" + ref.Name
-					podsByDaemonSet[key] = append(podsByDaemonSet[key], wp)
-				case "Job":
-					key := pod.Namespace + "/" + ref.Name
-					podsByJob[key] = append(podsByJob[key], wp)
-				}
-			}
+			groupNotReadyPod(&pod, wp, rsToDeploy, podsByDeployment, podsByStatefulSet, podsByDaemonSet, podsByJob)
 		}
 	}
 
@@ -166,6 +153,12 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		return nil, err
 	}
 	c.collectIngresses(ctx, excluded, snapshot)
+
+	// Full workload inventory + PVCs for the logical mirror
+	if err := c.collectWorkloads(ctx, excluded, snapshot, nodesByWorkload); err != nil {
+		return nil, err
+	}
+	c.collectPVCs(ctx, excluded, snapshot)
 
 	// Detect deprecated API usage
 	c.detectDeprecatedAPIs(snapshot)
