@@ -97,6 +97,20 @@ func baseRisk(c Component, addonStatus map[string]string) int {
 	}
 }
 
+// namespaceBucket decides which bucket a component aggregates into. Cluster-scoped
+// components (Nodes, and future cluster-scoped kinds) go to "cluster-scoped" — never to a
+// namespace, since they sit above namespaces. Namespaced components use their namespace,
+// defaulting to "default" when unset (Kubernetes' implicit namespace).
+func namespaceBucket(c Component) string {
+	if c.Type == TypeInfra {
+		return "cluster-scoped"
+	}
+	if c.Namespace == "" {
+		return "default"
+	}
+	return c.Namespace
+}
+
 func aggregateByNamespace(nodes []Component) []NamespaceRisk {
 	type acc struct {
 		risk, count, atRisk int
@@ -104,10 +118,7 @@ func aggregateByNamespace(nodes []Component) []NamespaceRisk {
 	byNS := make(map[string]*acc)
 	order := []string{}
 	for _, n := range nodes {
-		ns := n.Namespace
-		if ns == "" {
-			ns = "cluster"
-		}
+		ns := namespaceBucket(n)
 		a, ok := byNS[ns]
 		if !ok {
 			a = &acc{}

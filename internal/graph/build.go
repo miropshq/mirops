@@ -76,9 +76,12 @@ func (b *builder) addEdge(from, to, typ string) {
 
 func (b *builder) addAddons(snap *collector.ClusterSnapshot) {
 	for _, a := range snap.DetectedAddons {
+		// Add-ons live in a namespace (istio-system, cert-manager, ...). The ID stays
+		// namespace-free so one add-on is a single logical node, but the Namespace field
+		// is set so it aggregates into its real namespace, not the cluster-scoped bucket.
 		nid := id("Addon", "", a.Name)
 		b.addonID[a.Name] = nid
-		b.addNode(Component{ID: nid, Kind: "Addon", Name: a.Name, Type: TypeAddon, Version: a.Version})
+		b.addNode(Component{ID: nid, Kind: "Addon", Name: a.Name, Namespace: a.Namespace, Type: TypeAddon, Version: a.Version})
 	}
 }
 
