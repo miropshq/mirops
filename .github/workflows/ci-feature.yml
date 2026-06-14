@@ -1,0 +1,47 @@
+name: CI - Feature (lint, test, build)
+
+on:
+  push:
+    branches:
+      - feature/**
+
+permissions:
+  contents: read
+
+jobs:
+  # ─── CI ────────────────────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate code
+        run: make generate
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Lint Dockerfile (operator)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.operator
+
+      - name: Lint Dockerfile (remediation)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.remediation
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Build binary
+        run: make build
