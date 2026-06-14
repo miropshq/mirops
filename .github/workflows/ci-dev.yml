@@ -28,6 +28,17 @@ jobs:
       - name: Generate manifests
         run: make manifests
 
+      # Upload the CRDs generated from the pushed code (output of `make manifests` above),
+      # so the mirops-operator Helm chart consumes CRDs that always match this commit —
+      # never the committed copy, which could be stale.
+      - name: Upload CRDs
+        uses: actions/upload-artifact@v4
+        with:
+          name: crds-dev
+          path: config/crd/bases/*.yaml
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Lint Dockerfile (operator)
         uses: hadolint/hadolint-action@v3.1.0
         with:
