@@ -124,9 +124,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-${{ matrix.tag_suffix }}
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.tag_suffix }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.tag_suffix }}
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:${{ matrix.tag_suffix }}
+          cache-from: type=gha,scope=${{ matrix.image }}-dev-${{ matrix.tag_suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-dev-${{ matrix.tag_suffix }}
 
   # ─── Merge manifest list ────────────────────────────────────────────────────
   # Combines both arch-specific tags into a manifest list with the final tags.
@@ -151,10 +151,10 @@ jobs:
       - name: Create manifest list and push
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev \
-            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}:sha-${{ github.sha }} \
-            ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-linux-amd64 \
-            ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev-linux-arm64
+            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:dev \
+            -t ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:sha-${{ github.sha }} \
+            ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:linux-amd64 \
+            ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:linux-arm64
 
       - name: Inspect manifest
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ matrix.image }}:dev
+        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}/${{ matrix.image }}-dev:dev
