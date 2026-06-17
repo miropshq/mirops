@@ -1,4 +1,4 @@
-name: CI - Production (lint, test, build, semantic-release, push :vX.Y.Z)
+name: CI - Release (lint, test, build, semantic-release, push :vX.Y.Z)
 
 on:
   push:

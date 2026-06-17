@@ -1,0 +1,15 @@
+{
+  "LABEL": {
+    "name": "title needs formatting",
+    "color": "EEEEEE"
+  },
+  "CHECKS": {
+    "regexp": "^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\\([a-z0-9 ._-]+\\))?(!)?: .+",
+    "ignoreLabels": ["ignore-title"]
+  },
+  "MESSAGES": {
+    "success": "PR title follows Conventional Commits.",
+    "failure": "PR title must follow Conventional Commits, e.g. 'feat: add X' or 'fix(scope): correct Y'.",
+    "notice": "The PR title becomes the squash commit on main and drives the release version."
+  }
+}
