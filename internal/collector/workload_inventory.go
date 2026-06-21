@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 )
 
 // collectWorkloads enumerates every workload of every kind (healthy or not) into
@@ -109,6 +110,7 @@ func (c *DefaultClusterCollector) collectPVCs(ctx context.Context, excluded map[
 	if err := c.Client.List(ctx, pvcList); err != nil {
 		return
 	}
+	bindingModes, defaultSC := c.storageClassBindingModes(ctx)
 	for _, pvc := range pvcList.Items {
 		if excluded[pvc.Namespace] {
 			continue
@@ -117,13 +119,40 @@ func (c *DefaultClusterCollector) collectPVCs(ctx context.Context, excluded map[
 		if pvc.Spec.StorageClassName != nil {
 			sc = *pvc.Spec.StorageClassName
 		}
+		// A PVC with no explicit StorageClass uses the cluster's default one.
+		lookup := sc
+		if lookup == "" {
+			lookup = defaultSC
+		}
 		snapshot.PVCs = append(snapshot.PVCs, PVCRef{
 			Namespace:    pvc.Namespace,
 			Name:         pvc.Name,
 			StorageClass: sc,
 			Phase:        string(pvc.Status.Phase),
+			BindingMode:  bindingModes[lookup],
 		})
 	}
+}
+
+// storageClassBindingModes maps StorageClass name -> volumeBindingMode and returns the default
+// StorageClass name (the one annotated as default). Best-effort: returns empty results when
+// StorageClasses can't be listed, so PVC scoring falls back to phase alone.
+func (c *DefaultClusterCollector) storageClassBindingModes(ctx context.Context) (map[string]string, string) {
+	modes := map[string]string{}
+	defaultSC := ""
+	scList := &storagev1.StorageClassList{}
+	if err := c.Client.List(ctx, scList); err != nil {
+		return modes, defaultSC
+	}
+	for _, sc := range scList.Items {
+		if sc.VolumeBindingMode != nil {
+			modes[sc.Name] = string(*sc.VolumeBindingMode)
+		}
+		if sc.Annotations["storageclass.kubernetes.io/is-default-class"] == annotationTrue {
+			defaultSC = sc.Name
+		}
+	}
+	return modes, defaultSC
 }
 
 // newWorkload builds a Workload from a pod template, extracting labels, config/PVC refs,

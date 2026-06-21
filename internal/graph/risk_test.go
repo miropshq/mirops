@@ -6,6 +6,32 @@ import (
 	"github.com/miropshq/mirops/internal/collector"
 )
 
+// TestPVCBindingModeRisk verifies PVC phase scoring, and that a Pending PVC bound by a
+// WaitForFirstConsumer StorageClass is treated as normal (risk 0), not as a stuck volume.
+func TestPVCBindingModeRisk(t *testing.T) {
+	snap := &collector.ClusterSnapshot{
+		PVCs: []collector.PVCRef{
+			{Namespace: "a", Name: "wfc-pending", Phase: "Pending", BindingMode: "WaitForFirstConsumer"},
+			{Namespace: "a", Name: "immediate-pending", Phase: "Pending", BindingMode: "Immediate"},
+			{Namespace: "a", Name: "lost", Phase: "Lost"},
+			{Namespace: "a", Name: "bound", Phase: "Bound", BindingMode: "WaitForFirstConsumer"},
+		},
+	}
+	g := BuildFromSnapshot(snap)
+	g.ApplyRisk(nil)
+
+	risk := make(map[string]int, len(g.Nodes))
+	for _, n := range g.Nodes {
+		risk[n.Name] = n.Risk
+	}
+	cases := map[string]int{"wfc-pending": 0, "immediate-pending": 50, "lost": 90, "bound": 0}
+	for name, want := range cases {
+		if risk[name] != want {
+			t.Errorf("PVC %q risk = %d, want %d", name, risk[name], want)
+		}
+	}
+}
+
 // TestApplyRiskPropagation verifies that an incompatible add-on raises its own risk and
 // propagates a decayed share to the workload/ingress that depend on it.
 func TestApplyRiskPropagation(t *testing.T) {

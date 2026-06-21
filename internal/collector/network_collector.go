@@ -112,10 +112,10 @@ func podSpecConfigRefs(spec *corev1.PodSpec) []ConfigRef {
 
 // usesIstioSidecar reports whether a pod template requests Istio sidecar injection.
 func usesIstioSidecar(labels, annotations map[string]string) bool {
-	if labels["sidecar.istio.io/inject"] == "true" {
+	if labels["sidecar.istio.io/inject"] == annotationTrue {
 		return true
 	}
-	if annotations["sidecar.istio.io/inject"] == "true" {
+	if annotations["sidecar.istio.io/inject"] == annotationTrue {
 		return true
 	}
 	return false

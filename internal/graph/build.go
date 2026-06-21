@@ -116,8 +116,18 @@ func (b *builder) addNetwork(snap *collector.ClusterSnapshot) {
 
 func (b *builder) addStorage(snap *collector.ClusterSnapshot) {
 	for _, p := range snap.PVCs {
-		b.addNode(Component{ID: id("PVC", p.Namespace, p.Name), Kind: "PVC", Name: p.Name, Namespace: p.Namespace, Type: TypeStorage, Status: p.Phase})
+		b.addNode(Component{ID: id("PVC", p.Namespace, p.Name), Kind: "PVC", Name: p.Name, Namespace: p.Namespace, Type: TypeStorage, Status: pvcStatus(p)})
 	}
+}
+
+// pvcStatus returns the risk-relevant status for a PVC. A Pending PVC bound by a
+// WaitForFirstConsumer StorageClass is normal — it waits for a pod to be scheduled before
+// provisioning — so it's reported distinctly and scores as benign, not as a stuck volume.
+func pvcStatus(p collector.PVCRef) string {
+	if p.Phase == "Pending" && p.BindingMode == "WaitForFirstConsumer" {
+		return "Pending (WaitForFirstConsumer)"
+	}
+	return p.Phase
 }
 
 // --- Edge passes -----------------------------------------------------------

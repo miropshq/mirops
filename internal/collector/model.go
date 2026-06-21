@@ -63,6 +63,7 @@ type PVCRef struct {
 	Name         string
 	StorageClass string
 	Phase        string // Bound | Pending | Lost
+	BindingMode  string // StorageClass volumeBindingMode: Immediate | WaitForFirstConsumer | ""
 }
 
 // DeploymentWorkload represents a deployment with its pod details
@@ -94,6 +95,9 @@ type DaemonSetIssue struct {
 	NumberUnavailable int32
 	Pods              []WorkloadPod
 }
+
+// annotationTrue is the string value Kubernetes uses for boolean annotations/labels.
+const annotationTrue = "true"
 
 // Job status values reported on JobIssue.Status.
 const (

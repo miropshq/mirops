@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -16,6 +17,7 @@ import (
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/analysis"
+	"github.com/miropshq/mirops/internal/graph"
 )
 
 type aiScoreResponse struct {
@@ -209,20 +211,7 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, "\n")
 	}
 
-	if report.Graph != nil && len(report.Graph.Edges) > 0 {
-		fmt.Fprintf(&b, "KEY DEPENDENCIES (what breaks if a component is disrupted):\n")
-		shown := 0
-		for _, e := range report.Graph.Edges {
-			if e.Type != "depends-on" {
-				continue
-			}
-			fmt.Fprintf(&b, "- %s %s %s\n", e.From, e.Type, e.To)
-			if shown++; shown >= 20 {
-				break
-			}
-		}
-		fmt.Fprintf(&b, "\n")
-	}
+	writeGraphContext(&b, report.Graph)
 
 	if withRemediation {
 		fmt.Fprintf(&b, "Also propose remediation actions for the detected issues.\n")
@@ -235,6 +224,65 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, `{"score": <integer 0-100>, "reasoning": "<one concise paragraph>"}`)
 	}
 	return b.String()
+}
+
+// writeGraphContext appends per-component risk and dependency blast-radius sections to the AI
+// prompt, giving the model the specific risky components (id + type + status) and the edges
+// touching them — not just the namespace aggregate. Both sections are bounded to keep the prompt
+// small, and omitted when empty (no risky components, or no operator graph).
+func writeGraphContext(b *strings.Builder, g *graph.Graph) {
+	if g == nil {
+		return
+	}
+	atRisk := make([]graph.Component, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		if n.Risk > 0 {
+			atRisk = append(atRisk, n)
+		}
+	}
+	sort.Slice(atRisk, func(i, j int) bool { return atRisk[i].Risk > atRisk[j].Risk })
+
+	if len(atRisk) > 0 {
+		const maxComponents = 30
+		fmt.Fprintf(b, "COMPONENTS AT RISK (0-100, propagated through dependencies):\n")
+		for i, n := range atRisk {
+			if i >= maxComponents {
+				fmt.Fprintf(b, "- ...and %d more\n", len(atRisk)-maxComponents)
+				break
+			}
+			status := n.Status
+			if status == "" {
+				status = "-"
+			}
+			fmt.Fprintf(b, "- %s (%s, status %s): risk %d\n", n.ID, n.Type, status, n.Risk)
+		}
+		fmt.Fprintf(b, "\n")
+	}
+
+	// Dependency blast radius: edges touching an at-risk component (either endpoint), across all
+	// edge types — what a risky component affects, or what it hangs off of.
+	risky := make(map[string]bool, len(atRisk))
+	for _, n := range atRisk {
+		if n.Risk >= 50 {
+			risky[n.ID] = true
+		}
+	}
+	deps := make([]string, 0, 20)
+	for _, e := range g.Edges {
+		if risky[e.From] || risky[e.To] {
+			deps = append(deps, fmt.Sprintf("- %s %s %s", e.From, e.Type, e.To))
+			if len(deps) >= 20 {
+				break
+			}
+		}
+	}
+	if len(deps) > 0 {
+		fmt.Fprintf(b, "KEY DEPENDENCIES (edges touching an at-risk component):\n")
+		for _, d := range deps {
+			fmt.Fprintf(b, "%s\n", d)
+		}
+		fmt.Fprintf(b, "\n")
+	}
 }
 
 // classifyAIError turns a raw SDK/API error into a clear, user-facing message that
