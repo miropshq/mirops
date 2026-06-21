@@ -167,6 +167,13 @@ type UpgradeAnalysisSpec struct {
 	// +required
 	TargetVersion string `json:"targetVersion"`
 
+	// scoringProfile selects how strict the upgrade-readiness scoring is.
+	// "production" (default) is strict; "non-production" is lenient.
+	// +kubebuilder:validation:Enum=production;non-production
+	// +kubebuilder:default=production
+	// +optional
+	ScoringProfile string `json:"scoringProfile,omitempty"`
+
 	// scope controls which namespaces are included in the analysis.
 	// Defaults to "all" (system + application namespaces).
 	// +optional

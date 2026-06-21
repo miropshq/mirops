@@ -151,6 +151,15 @@ spec:
                 required:
                 - mode
                 type: object
+              scoringProfile:
+                default: production
+                description: |-
+                  scoringProfile selects how strict the upgrade-readiness scoring is.
+                  "production" (default) is strict; "non-production" is lenient.
+                enum:
+                - production
+                - non-production
+                type: string
               source:
                 description: source defines where the analysis report will be written
                 properties:

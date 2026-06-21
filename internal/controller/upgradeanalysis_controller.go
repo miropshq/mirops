@@ -141,7 +141,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	snapshot.AddonIssues = incompatible
 
 	// Calculate upgrade readiness score
-	report := analysis.Calculate(snapshot, ua.Spec.TargetVersion)
+	report := analysis.Calculate(snapshot, ua.Spec.TargetVersion, ua.Spec.ScoringProfile)
 	now := time.Now().UTC()
 	report.GeneratedAt = now.Format(time.RFC3339)
 	report.Cluster = ua.Name
@@ -185,7 +185,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 					model = "claude-sonnet-4-6"
 				}
 			}
-			analysis.ApplyAIScore(report, aiScore, reasoning, model)
+			analysis.ApplyAIScore(report, aiScore, reasoning, model, ua.Spec.ScoringProfile)
 			ua.Status.AIModel = model
 			log.Info("AI score applied",
 				"aiScore", aiScore,

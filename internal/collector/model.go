@@ -153,6 +153,12 @@ type ClusterSnapshot struct {
 	TotalRestarts int
 	PodIssues     []PodIssue
 
+	// RestartingPods counts service pods (restartPolicy=Always) that are currently crashing
+	// (CrashLoopBackOff / ImagePullBackOff / ErrImagePull) at an abnormal rate (>= 10
+	// restarts/24h). Each such pod counts once; the health score uses the ratio
+	// RestartingPods/TotalPods so it scales with cluster size.
+	RestartingPods int
+
 	// Capacity (CPU/Mem requests vs node capacity)
 	CPURequests float64
 	CPUCapacity float64

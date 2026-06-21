@@ -8,8 +8,6 @@ import (
 )
 
 const (
-	scoreThreshold = 70
-
 	levelSafe    = "SAFE"
 	levelWarning = "WARNING"
 	levelBlock   = "BLOCK"
@@ -18,13 +16,17 @@ const (
 // Calculate computes the upgrade readiness report from a ClusterSnapshot.
 // Formula based on:
 //
-//	Health   (25): 25 - (notReadyRatio*100*0.2) - (restartRatio*100*0.1)
+//	Health   (25): 25 - (notReadyRatio*15) - (restartingRatio*10)   // both proportional
 //	Capacity (30): 30 - (cpuPressure*30) - (memPressure*30)
 //	Stability(20): 20 - (podDelta*100*0.1) - (restartDelta*0.5)
 //	Risk     (25): 25 - (deprecatedApis*5) - (addonIssues*10)
-func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
+//
+// An unstable cluster (>5% pods not ready) caps the decision at WARNING regardless of the
+// total, so a small cluster with broken pods can't be declared SAFE.
+func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName string) *Report {
+	profile := profileFor(profileName)
 	m := buildMetrics(snap)
-	c := buildConditions(snap, m)
+	c := buildConditions(snap, m, profile)
 
 	health := calcHealth(m)
 	capacity := calcCapacity(m)
@@ -37,7 +39,7 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 		total = 0
 	}
 
-	level, allow := decide(total, c)
+	level, allow := decide(total, c, profile)
 
 	issues := buildIssues(snap)
 	workloads := buildWorkloads(snap)
@@ -47,7 +49,7 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 		ClusterVersion: snap.ClusterVersion,
 		TargetVersion:  targetVersion,
 		Decision: Decision{
-			Threshold: scoreThreshold,
+			Threshold: profile.BlockThreshold,
 			Allow:     allow,
 			Level:     level,
 		},
@@ -74,9 +76,10 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion string) *Report {
 func buildMetrics(snap *collector.ClusterSnapshot) Metrics {
 	return Metrics{
 		Pods: PodMetrics{
-			Total:    snap.TotalPods,
-			NotReady: snap.NotReadyPods,
-			Restarts: snap.TotalRestarts,
+			Total:      snap.TotalPods,
+			NotReady:   snap.NotReadyPods,
+			Restarts:   snap.TotalRestarts,
+			Restarting: snap.RestartingPods,
 		},
 		Resources: ResourceMetrics{
 			CPUPressure:    snap.CPURequests / nonZero(snap.CPUCapacity),
@@ -93,20 +96,29 @@ func buildMetrics(snap *collector.ClusterSnapshot) Metrics {
 	}
 }
 
-func buildConditions(snap *collector.ClusterSnapshot, m Metrics) Conditions {
+func buildConditions(snap *collector.ClusterSnapshot, m Metrics, p ScoringProfile) Conditions {
+	notReadyRatio := float64(m.Pods.NotReady) / float64(nonZeroInt(m.Pods.Total))
 	return Conditions{
 		PDBBlocking:        snap.PDBBlocking,
 		HighCPUPressure:    m.Resources.CPUPressure > 0.9,
 		HighMemoryPressure: m.Resources.MemoryPressure > 0.9,
-		UnstableCluster:    m.Pods.Total > 0 && float64(m.Pods.NotReady)/float64(nonZeroInt(m.Pods.Total)) > 0.05,
+		UnstableCluster:    m.Pods.Total > 0 && notReadyRatio > p.UnstableWarnPct,
+		SeverelyUnstable:   m.Pods.Total > 0 && notReadyRatio > p.UnstableBlockPct,
 	}
 }
 
+// calcHealth scores pod health out of 25 from two proportional signals, so it scales with
+// cluster size (one bad pod out of 1000 is negligible; out of 6 it matters):
+//   - notReady fraction → up to 15 points
+//   - abnormally-restarting fraction → up to 10 points
+//
+// Together they partition the 25-point budget. A single critical pod that these ratios
+// dilute is caught instead by the per-component graph risk and the decision guard.
 func calcHealth(m Metrics) int {
-	notReadyRatio := float64(m.Pods.NotReady) / float64(nonZeroInt(m.Pods.Total))
-	restartRatio := float64(m.Pods.Restarts) / float64(nonZeroInt(m.Pods.Total))
-	score := 25 - (notReadyRatio * 100 * 0.2) - (restartRatio * 100 * 0.1)
-	return clamp(int(score), 25)
+	total := float64(nonZeroInt(m.Pods.Total))
+	notReadyPenalty := float64(m.Pods.NotReady) / total * 15
+	restartPenalty := float64(m.Pods.Restarting) / total * 10
+	return clamp(int(25-notReadyPenalty-restartPenalty), 25)
 }
 
 func calcCapacity(m Metrics) int {
@@ -124,11 +136,14 @@ func calcRisk(m Metrics) int {
 	return clamp(int(score), 25)
 }
 
-func decide(total int, c Conditions) (string, bool) {
-	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure || total < scoreThreshold {
+func decide(total int, c Conditions, p ScoringProfile) (string, bool) {
+	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure || c.SeverelyUnstable || total < p.BlockThreshold {
 		return levelBlock, false
 	}
-	if total < 90 {
+	// An unstable cluster can't be declared SAFE even if the proportional score is high —
+	// a small cluster with broken pods would otherwise pass. The thresholds come from the
+	// scoring profile (production strict, non-production lenient).
+	if c.UnstableCluster || total < p.SafeThreshold {
 		return levelWarning, true
 	}
 	return levelSafe, true
@@ -331,7 +346,7 @@ func clamp(v, max int) int {
 //
 // The decision level is re-evaluated against the new total.
 // reasoning is only set when non-empty (ai.enabled == true path).
-func ApplyAIScore(report *Report, aiScore int, reasoning, model string) {
+func ApplyAIScore(report *Report, aiScore int, reasoning, model, profileName string) {
 	baseScore := report.Scores.Base.Score
 	baseContribution := int(float64(baseScore) * 0.7)
 	aiContribution := int(float64(aiScore) * 0.3)
@@ -349,7 +364,7 @@ func ApplyAIScore(report *Report, aiScore int, reasoning, model string) {
 	if reasoning != "" {
 		report.AIReasoning = reasoning
 	}
-	level, allow := decide(blended, report.Conditions)
+	level, allow := decide(blended, report.Conditions, profileFor(profileName))
 	report.Decision.Level = level
 	report.Decision.Allow = allow
 }

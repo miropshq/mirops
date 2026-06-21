@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -91,6 +92,11 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 			if mem, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
 				snapshot.MemRequests += float64(mem.Value())
 			}
+		}
+
+		// Count currently-crashing service pods that restart at an abnormal rate.
+		if isRestartingAbnormally(&pod, time.Now()) {
+			snapshot.RestartingPods++
 		}
 
 		// Record which node this pod runs on, attributed to its logical workload.

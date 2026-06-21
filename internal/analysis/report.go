@@ -134,9 +134,10 @@ type Metrics struct {
 }
 
 type PodMetrics struct {
-	Total    int `json:"total"`
-	NotReady int `json:"notReady"`
-	Restarts int `json:"restarts"`
+	Total      int `json:"total"`
+	NotReady   int `json:"notReady"`
+	Restarts   int `json:"restarts"`
+	Restarting int `json:"restarting,omitempty"` // service pods crashing at an abnormal rate
 }
 
 type ResourceMetrics struct {
@@ -158,7 +159,8 @@ type Conditions struct {
 	PDBBlocking        bool `json:"pdbBlocking"`
 	HighCPUPressure    bool `json:"highCpuPressure"`
 	HighMemoryPressure bool `json:"highMemoryPressure"`
-	UnstableCluster    bool `json:"unstableCluster"`
+	UnstableCluster    bool `json:"unstableCluster"`  // notReady > profile.UnstableWarnPct
+	SeverelyUnstable   bool `json:"severelyUnstable"` // notReady > profile.UnstableBlockPct
 }
 
 type Decision struct {
