@@ -95,11 +95,22 @@ type DaemonSetIssue struct {
 	Pods              []WorkloadPod
 }
 
-// JobIssue describes an active Job that may be interrupted by the upgrade
+// Job status values reported on JobIssue.Status.
+const (
+	JobStatusActive    = "Active"
+	JobStatusFailed    = "Failed"
+	JobStatusCompleted = "Completed"
+	JobStatusPending   = "Pending"
+)
+
+// JobIssue describes an active Job that may be interrupted by the upgrade or a
+// terminally failed Job that exhausted its retries.
 type JobIssue struct {
 	Namespace string
 	Name      string
 	Active    int32
+	Status    string // Active | Failed
+	Reason    string // Kubernetes Job condition reason, e.g. BackoffLimitExceeded
 	Pods      []WorkloadPod
 }
 

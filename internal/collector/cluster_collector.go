@@ -149,7 +149,7 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		return nil, err
 	}
 
-	// Collect active Jobs
+	// Collect active and terminally failed Jobs
 	if err := c.collectJobs(ctx, excluded, snapshot, podsByJob); err != nil {
 		return nil, err
 	}
@@ -379,7 +379,8 @@ func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, exclude
 	return nil
 }
 
-// collectJobs detects active Jobs that may be interrupted during the upgrade.
+// collectJobs detects active Jobs that may be interrupted during the upgrade and Jobs
+// whose Failed condition confirms Kubernetes has stopped retrying them.
 func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByJob map[string][]WorkloadPod) error {
 	jobList := &batchv1.JobList{}
 	if err := c.Client.List(ctx, jobList); err != nil {
@@ -389,12 +390,19 @@ func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[
 		if excluded[job.Namespace] {
 			continue
 		}
-		if job.Status.Active > 0 {
+		failed, reason := jobFailedReason(&job)
+		if job.Status.Active > 0 || failed {
 			key := job.Namespace + "/" + job.Name
+			status := JobStatusActive
+			if failed {
+				status = JobStatusFailed
+			}
 			snapshot.JobIssues = append(snapshot.JobIssues, JobIssue{
 				Namespace: job.Namespace,
 				Name:      job.Name,
 				Active:    job.Status.Active,
+				Status:    status,
+				Reason:    reason,
 				Pods:      podsByJob[key],
 			})
 		}

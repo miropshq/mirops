@@ -202,7 +202,7 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// decision is the result of the analysis: SAFE, WARNING, or BLOCK
+	// decision is the result of the analysis: SAFE, WARNING, or CRITICAL
 	// +optional
 	Decision string `json:"decision,omitempty"`
 

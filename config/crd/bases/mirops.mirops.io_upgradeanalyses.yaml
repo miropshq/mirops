@@ -301,7 +301,7 @@ spec:
                 x-kubernetes-list-type: map
               decision:
                 description: 'decision is the result of the analysis: SAFE, WARNING,
-                  or BLOCK'
+                  or CRITICAL'
                 type: string
               incompatibleAddons:
                 description: incompatibleAddons is the number of add-ons found incompatible

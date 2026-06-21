@@ -225,16 +225,32 @@ func replicaStatus(ready, desired int32) string {
 
 // jobStatus derives a status string from a Job's counters.
 func jobStatus(j *batchv1.Job) string {
+	if failed, _ := jobFailedReason(j); failed {
+		return JobStatusFailed
+	}
 	switch {
 	case j.Status.Active > 0:
-		return "Active"
-	case j.Status.Failed > 0:
-		return "Failed"
+		return JobStatusActive
 	case j.Status.Succeeded > 0:
-		return "Completed"
+		return JobStatusCompleted
 	default:
-		return "Pending"
+		return JobStatusPending
 	}
+}
+
+// jobFailedReason returns true only for a terminal Job failure. Failed pod attempts by
+// themselves are not enough: Kubernetes may still retry until backoffLimit is exhausted.
+func jobFailedReason(j *batchv1.Job) (bool, string) {
+	for _, condition := range j.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			reason := condition.Reason
+			if reason == "" {
+				reason = "Failed"
+			}
+			return true, reason
+		}
+	}
+	return false, ""
 }
 
 // sortedKeys returns the keys of a set as a stable, sorted slice (nil set -> nil).

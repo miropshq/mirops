@@ -78,7 +78,7 @@ func baseRisk(c Component, addonStatus map[string]string) int {
 		}
 	case TypeWorkload:
 		switch {
-		case c.Status == "Down":
+		case c.Status == "Down", c.Status == "Failed":
 			return 70
 		case strings.HasPrefix(c.Status, "Degraded"):
 			return 40
@@ -92,6 +92,15 @@ func baseRisk(c Component, addonStatus map[string]string) int {
 			return 60
 		}
 		return 0
+	case TypeStorage:
+		switch c.Status {
+		case "Lost":
+			return 90
+		case "Pending":
+			return 50
+		default:
+			return 0
+		}
 	default:
 		return 0 // network, config: inherit only
 	}

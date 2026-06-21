@@ -8,7 +8,6 @@ type ScoringProfile struct {
 	UnstableWarnPct  float64 // notReady fraction above which the cluster can't be SAFE
 	UnstableBlockPct float64 // notReady fraction above which the upgrade is BLOCKed
 	SafeThreshold    int     // total score at/above which the cluster may be SAFE
-	BlockThreshold   int     // total score below which the upgrade is BLOCKed
 }
 
 // Profile names (match the CRD enum).
@@ -23,16 +22,14 @@ var scoringProfiles = map[string]ScoringProfile{
 	ProfileProduction: {
 		Name:             ProfileProduction,
 		UnstableWarnPct:  0.05, // >5% not ready → at least WARNING
-		UnstableBlockPct: 0.30, // >30% not ready → BLOCK
+		UnstableBlockPct: 0.30, // >30% not ready → CRITICAL
 		SafeThreshold:    90,
-		BlockThreshold:   70,
 	},
 	ProfileNonProduction: {
 		Name:             ProfileNonProduction,
 		UnstableWarnPct:  0.15, // >15% not ready → at least WARNING
-		UnstableBlockPct: 0.60, // >60% not ready → BLOCK
+		UnstableBlockPct: 0.60, // >60% not ready → CRITICAL
 		SafeThreshold:    85,
-		BlockThreshold:   60,
 	},
 }
 

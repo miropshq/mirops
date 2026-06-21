@@ -200,6 +200,11 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	// Final decision authority: layer the deterministic graph/compat blockers (incompatible
+	// add-ons, Lost PVCs) on top of the snapshot conditions and record every blocker. Runs
+	// last so it sees the full mirror and has the last word over the base + AI decision.
+	analysis.ApplyGraphDecision(report)
+
 	// Always write report to the local reports directory so the HTTP server can serve it
 	// regardless of whether the configured source is file, s3, or blob.
 	localPath := r.ReportsDir + "/" + ua.Name + ".json"

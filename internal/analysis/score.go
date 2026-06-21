@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	levelSafe    = "SAFE"
-	levelWarning = "WARNING"
-	levelBlock   = "BLOCK"
+	levelSafe     = "SAFE"
+	levelWarning  = "WARNING"
+	levelCritical = "CRITICAL"
 )
 
 // Calculate computes the upgrade readiness report from a ClusterSnapshot.
@@ -49,9 +49,8 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName strin
 		ClusterVersion: snap.ClusterVersion,
 		TargetVersion:  targetVersion,
 		Decision: Decision{
-			Threshold: profile.BlockThreshold,
-			Allow:     allow,
-			Level:     level,
+			Allow: allow,
+			Level: level,
 		},
 		Reason: buildReason(level, c, m, snap),
 		Scores: Scores{
@@ -136,9 +135,16 @@ func calcRisk(m Metrics) int {
 	return clamp(int(score), 25)
 }
 
+// decide derives the decision level from the snapshot-only conditions. The score no longer
+// drives blocking on its own — it is a readiness gauge, not a gate. CRITICAL comes only from
+// deterministic facts (a PDB that would stall the drain, CPU/memory exhaustion, or pods not
+// ready beyond the profile's block ratio). A low score can still warrant a WARNING.
+//
+// Graph/compat facts (incompatible add-ons, Lost PVCs) are layered on afterwards by
+// ApplyGraphDecision, which runs last with the full mirror in hand.
 func decide(total int, c Conditions, p ScoringProfile) (string, bool) {
-	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure || c.SeverelyUnstable || total < p.BlockThreshold {
-		return levelBlock, false
+	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure || c.SeverelyUnstable {
+		return levelCritical, false
 	}
 	// An unstable cluster can't be declared SAFE even if the proportional score is high —
 	// a small cluster with broken pods would otherwise pass. The thresholds come from the
@@ -169,7 +175,11 @@ func buildIssues(snap *collector.ClusterSnapshot) []string {
 		issues = append(issues, fmt.Sprintf("daemonset %s/%s: %d pod(s) unavailable", ds.Namespace, ds.Name, ds.NumberUnavailable))
 	}
 	for _, j := range snap.JobIssues {
-		issues = append(issues, fmt.Sprintf("job %s/%s: %d active pod(s) may be interrupted", j.Namespace, j.Name, j.Active))
+		if j.Status == "Failed" {
+			issues = append(issues, fmt.Sprintf("job %s/%s: failed (%s)", j.Namespace, j.Name, j.Reason))
+		} else {
+			issues = append(issues, fmt.Sprintf("job %s/%s: %d active pod(s) may be interrupted", j.Namespace, j.Name, j.Active))
+		}
 	}
 	for _, api := range snap.DeprecatedAPIList {
 		issues = append(issues, fmt.Sprintf("deprecated API %s (%s) removed in k8s %s", api.Resource, api.Version, api.RemovedIn))
@@ -214,6 +224,15 @@ func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterS
 		return fmt.Sprintf("DaemonSet %s/%s has %d unavailable pod(s)", ds.Namespace, ds.Name, ds.NumberUnavailable)
 	}
 	if len(snap.JobIssues) > 0 {
+		failed := 0
+		for _, job := range snap.JobIssues {
+			if job.Status == "Failed" {
+				failed++
+			}
+		}
+		if failed > 0 {
+			return fmt.Sprintf("%d job(s) failed after exhausting retries", failed)
+		}
 		return fmt.Sprintf("%d active job(s) may be interrupted during upgrade", len(snap.JobIssues))
 	}
 	if m.Compatibility.DeprecatedAPIs > 0 {
@@ -281,7 +300,7 @@ func buildWorkloads(snap *collector.ClusterSnapshot) ReportWorkloads {
 		}
 		jobs = append(jobs, JobReport{
 			Namespace: j.Namespace, Name: j.Name,
-			Active: j.Active, Pods: pods,
+			Active: j.Active, Status: j.Status, Reason: j.Reason, Pods: pods,
 		})
 	}
 
@@ -367,4 +386,71 @@ func ApplyAIScore(report *Report, aiScore int, reasoning, model, profileName str
 	level, allow := decide(blended, report.Conditions, profileFor(profileName))
 	report.Decision.Level = level
 	report.Decision.Allow = allow
+}
+
+// ApplyGraphDecision is the final decision authority. It runs after Calculate, ApplyRisk and
+// ApplyAIScore — with the full mirror (add-ons + graph) attached to the report — and escalates
+// the decision to CRITICAL for any deterministic upgrade blocker. It unifies two layers:
+//
+//   - snapshot conditions already flagged by decide (PDB, CPU/memory, pods not ready), and
+//   - graph/compat facts the base score can't see (incompatible add-ons, Lost PVCs).
+//
+// Every blocker is recorded on report.Decision.Blockers so mirops-cli --enforce and the UI can
+// show all reasons, not just one; allow becomes (no blockers). The readiness score is left
+// untouched — it is a gauge, not the gate. Propagated graph risk that doesn't stem from one of
+// these deterministic facts informs risk.byNamespace but does not block on its own.
+func ApplyGraphDecision(report *Report) {
+	blockers := collectBlockers(report)
+	report.Decision.Blockers = blockers
+	if len(blockers) > 0 {
+		report.Decision.Level = levelCritical
+		report.Decision.Allow = false
+	}
+}
+
+// collectBlockers gathers every critical (allow=false) reason from the finalized report.
+func collectBlockers(report *Report) []string {
+	var b []string
+	c := report.Conditions
+	if c.PDBBlocking {
+		if len(report.Workloads.PDBs) > 0 {
+			p := report.Workloads.PDBs[0]
+			b = append(b, fmt.Sprintf("PodDisruptionBudget %s/%s would stall node drain", p.Namespace, p.Name))
+		} else {
+			b = append(b, "a PodDisruptionBudget would stall node drain")
+		}
+	}
+	if c.HighCPUPressure {
+		b = append(b, fmt.Sprintf("CPU pressure at %.0f%% of capacity", report.Metrics.Resources.CPUPressure*100))
+	}
+	if c.HighMemoryPressure {
+		b = append(b, fmt.Sprintf("memory pressure at %.0f%% of capacity", report.Metrics.Resources.MemoryPressure*100))
+	}
+	if c.SeverelyUnstable {
+		pods := report.Metrics.Pods
+		pct := 0.0
+		if pods.Total > 0 {
+			pct = float64(pods.NotReady) / float64(pods.Total) * 100
+		}
+		b = append(b, fmt.Sprintf("%.0f%% of pods not ready (%d/%d)", pct, pods.NotReady, pods.Total))
+	}
+	// Graph/compat facts: an incompatible add-on or a Lost PVC seeds criticalRisk in the graph
+	// and deterministically fails the upgrade, so each is a hard blocker on its own.
+	for _, a := range report.Addons {
+		if a.Status == "incompatible" {
+			if a.RequiredVersion != "" {
+				b = append(b, fmt.Sprintf("incompatible add-on: %s %s (upgrade to %s)", a.Name, a.Version, a.RequiredVersion))
+			} else {
+				b = append(b, fmt.Sprintf("incompatible add-on: %s %s", a.Name, a.Version))
+			}
+		}
+	}
+	if report.Graph != nil {
+		for _, n := range report.Graph.Nodes {
+			if n.Type == "storage" && n.Status == "Lost" {
+				b = append(b, fmt.Sprintf("PVC %s/%s is Lost", n.Namespace, n.Name))
+			}
+		}
+	}
+	return b
 }

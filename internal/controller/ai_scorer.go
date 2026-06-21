@@ -63,7 +63,7 @@ func callAnthropic(ctx context.Context, apiKey, model, prompt string) (string, e
 	client := anthropic.NewClient(anthropicoption.WithAPIKey(apiKey))
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     model,
-		MaxTokens: 1024,
+		MaxTokens: 2048,
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
@@ -168,9 +168,13 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 	}
 
 	if len(report.Workloads.Jobs) > 0 {
-		fmt.Fprintf(&b, "ACTIVE JOBS:\n")
+		fmt.Fprintf(&b, "JOBS WITH ISSUES:\n")
 		for _, j := range report.Workloads.Jobs {
-			fmt.Fprintf(&b, "- %s/%s: %d active pods\n", j.Namespace, j.Name, j.Active)
+			if j.Status == "Failed" {
+				fmt.Fprintf(&b, "- %s/%s: failed (%s)\n", j.Namespace, j.Name, j.Reason)
+			} else {
+				fmt.Fprintf(&b, "- %s/%s: %d active pods\n", j.Namespace, j.Name, j.Active)
+			}
 		}
 		fmt.Fprintf(&b, "\n")
 	}

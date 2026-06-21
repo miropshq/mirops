@@ -85,6 +85,8 @@ type JobReport struct {
 	Namespace string              `json:"namespace"`
 	Name      string              `json:"name"`
 	Active    int32               `json:"active"`
+	Status    string              `json:"status"`
+	Reason    string              `json:"reason,omitempty"`
 	Pods      []WorkloadPodReport `json:"pods,omitempty"`
 }
 
@@ -164,7 +166,9 @@ type Conditions struct {
 }
 
 type Decision struct {
-	Threshold int    `json:"threshold"`
-	Allow     bool   `json:"allow"`
-	Level     string `json:"level"`
+	Allow bool   `json:"allow"`
+	Level string `json:"level"`
+	// Blockers lists every critical condition that forced level=CRITICAL (allow=false),
+	// so consumers (mirops-cli --enforce, Headlamp) can show all reasons, not just one.
+	Blockers []string `json:"blockers,omitempty"`
 }

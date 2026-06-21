@@ -65,3 +65,37 @@ func TestApplyRiskCompatibleAddon(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyRiskFailedJobAndPVCPhases(t *testing.T) {
+	snap := &collector.ClusterSnapshot{
+		Workloads: []collector.Workload{
+			{Kind: "Job", Namespace: "batch", Name: "migration", Status: "Failed"},
+			{Kind: "Deployment", Namespace: "shop", Name: "api", Status: "Healthy", PVCs: []string{"data"}},
+		},
+		PVCs: []collector.PVCRef{
+			{Namespace: "shop", Name: "data", Phase: "Lost"},
+			{Namespace: "shop", Name: "cache", Phase: "Pending"},
+			{Namespace: "shop", Name: "healthy", Phase: "Bound"},
+		},
+	}
+
+	g := BuildFromSnapshot(snap)
+	g.ApplyRisk(nil)
+
+	risk := make(map[string]int, len(g.Nodes))
+	for _, n := range g.Nodes {
+		risk[n.ID] = n.Risk
+	}
+	want := map[string]int{
+		"Job/batch/migration": 70,
+		"PVC/shop/data":       90,
+		"PVC/shop/cache":      50,
+		"PVC/shop/healthy":    0,
+		"Deployment/shop/api": 54,
+	}
+	for id, expected := range want {
+		if got := risk[id]; got != expected {
+			t.Errorf("%s risk = %d, want %d", id, got, expected)
+		}
+	}
+}
