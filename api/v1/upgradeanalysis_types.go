@@ -223,6 +223,16 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	LastAnalysisTime *metav1.Time `json:"lastAnalysisTime,omitempty"`
 
+	// lastRefresh is the value of the mirops.io/refresh annotation honored by the last analysis.
+	// Bumping that annotation forces an immediate re-analysis even within the resync interval.
+	// +optional
+	LastRefresh string `json:"lastRefresh,omitempty"`
+
+	// observedGeneration is the spec generation the last analysis ran against. A spec change
+	// re-runs the analysis immediately, even within the resync interval.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// reportPath is where the JSON report was written
 	// +optional
 	ReportPath string `json:"reportPath,omitempty"`

@@ -314,6 +314,11 @@ spec:
                 description: lastAnalysisTime is when the last analysis was performed
                 format: date-time
                 type: string
+              lastRefresh:
+                description: |-
+                  lastRefresh is the value of the mirops.io/refresh annotation honored by the last analysis.
+                  Bumping that annotation forces an immediate re-analysis even within the resync interval.
+                type: string
               lastTotalPods:
                 description: lastTotalPods is the pod count from the previous reconciliation,
                   used to compute stability delta
@@ -321,6 +326,12 @@ spec:
               lastTotalRestarts:
                 description: lastTotalRestarts is the restart count from the previous
                   reconciliation, used to compute stability delta
+                type: integer
+              observedGeneration:
+                description: |-
+                  observedGeneration is the spec generation the last analysis ran against. A spec change
+                  re-runs the analysis immediately, even within the resync interval.
+                format: int64
                 type: integer
               reason:
                 description: reason is a human-readable explanation of the decision
