@@ -207,9 +207,8 @@ func (r *UpgradeAnalysisReconciler) createRemediationPlan(ctx context.Context, u
 
 	plan := &miropsv1.RemediationPlan{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ua.Name + "-remediation",
-			Namespace: ua.Namespace,
-			Labels:    map[string]string{"mirops.io/analysis": ua.Name},
+			Name:   ua.Name + "-remediation",
+			Labels: map[string]string{"mirops.io/analysis": ua.Name},
 		},
 		Spec: miropsv1.RemediationPlanSpec{
 			UpgradeAnalysisRef: ua.Name,

@@ -12,7 +12,7 @@ spec:
     listKind: RemediationPlanList
     plural: remediationplans
     singular: remediationplan
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.upgradeAnalysisRef

@@ -106,7 +106,7 @@ func (r *UpgradeAnalysisReconciler) readAIAPIKey(ctx context.Context, ua *mirops
 	secret := &corev1.Secret{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      ua.Spec.AI.CredentialsSecret,
-		Namespace: ua.Namespace,
+		Namespace: r.OperatorNamespace,
 	}, secret); err != nil {
 		return "", fmt.Errorf("reading AI credentials secret %q: %w", ua.Spec.AI.CredentialsSecret, err)
 	}

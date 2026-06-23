@@ -210,10 +210,11 @@ func main() {
 	}()
 
 	if err := (&controller.UpgradeAnalysisReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Collector:  clusterCollector,
-		ReportsDir: reportsDir,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Collector:         clusterCollector,
+		ReportsDir:        reportsDir,
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
 		os.Exit(1)

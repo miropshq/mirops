@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,10 @@ type UpgradeAnalysisReconciler struct {
 	Scheme     *runtime.Scheme
 	Collector  collector.ClusterCollector
 	ReportsDir string
+	// OperatorNamespace is where the operator runs (from POD_NAMESPACE). Since UpgradeAnalysis
+	// is cluster-scoped, the operator reads its own dependencies (AI secret, compat ConfigMap)
+	// and the report's cloud-credentials secret from here, not from the CR's namespace.
+	OperatorNamespace string
 }
 
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
@@ -77,7 +82,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	log.Info("Reconciling UpgradeAnalysis", "name", ua.Name, "namespace", ua.Namespace)
+	log.Info("Reconciling UpgradeAnalysis", "name", ua.Name, "operatorNamespace", r.OperatorNamespace)
 
 	// Skip if the last analysis ran within the resync interval to avoid
 	// calling the AI API on every status update.
@@ -133,7 +138,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Mirops engine — Compatibility: evaluate detected add-ons against the target version
 	// BEFORE scoring so incompatible add-ons feed the risk score (AddonIssues).
-	matrix, err := r.loadCompatMatrix(ctx, ua.Namespace)
+	matrix, err := r.loadCompatMatrix(ctx, r.OperatorNamespace)
 	if err != nil {
 		log.Error(err, "failed to load compatibility matrix, using built-in defaults")
 		matrix = compat.DefaultMatrix()
@@ -216,15 +221,15 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	log.Info("Report written locally", "path", localPath)
 
-	// Additionally export to S3/blob if configured
-	if ua.Spec.Source.Type == miropsv1.SourceTypeS3 || ua.Spec.Source.Type == miropsv1.SourceTypeBlob {
-		cloudExp, err := r.buildExporter(ctx, ua)
+	// Additionally export to the configured destination (S3, Azure Blob, or PVC).
+	if t := ua.Spec.Source.Type; t == miropsv1.SourceTypeS3 || t == miropsv1.SourceTypeBlob || t == miropsv1.SourceTypePVC {
+		exp, err := r.buildExporter(ctx, ua)
 		if err != nil {
-			log.Error(err, "failed to build cloud exporter")
-		} else if err := cloudExp.Export(report); err != nil {
-			log.Error(err, "failed to export report to cloud")
+			log.Error(err, "failed to build exporter")
+		} else if err := exp.Export(report); err != nil {
+			log.Error(err, "failed to export report")
 		} else {
-			log.Info("Report synced to cloud", "location", cloudExp.Location())
+			log.Info("Report exported", "type", t, "location", exp.Location())
 		}
 	}
 
@@ -305,7 +310,7 @@ func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *mirop
 		secret := &corev1.Secret{}
 		if err := r.Client.Get(ctx, types.NamespacedName{
 			Name:      src.CredentialsSecret,
-			Namespace: ua.Namespace,
+			Namespace: r.OperatorNamespace,
 		}, secret); err != nil {
 			return nil, fmt.Errorf("reading credentials secret %q: %w", src.CredentialsSecret, err)
 		}
@@ -330,6 +335,14 @@ func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *mirop
 			ClientSecret:  string(secretData["AZURE_CLIENT_SECRET"]),
 			TenantID:      string(secretData["AZURE_TENANT_ID"]),
 		}, nil
+	case miropsv1.SourceTypePVC:
+		// A PVC destination is a filesystem write to a volume the Helm chart mounts. src.Path is
+		// the mount directory; the report lands as <name>.json so multiple analyses don't collide.
+		dir := src.Path
+		if dir == "" {
+			dir = "/mnt/mirops-reports"
+		}
+		return exporter.NewFileExporter(filepath.Join(dir, ua.Name+".json")), nil
 	default:
 		return exporter.NewFileExporter(src.Path), nil
 	}

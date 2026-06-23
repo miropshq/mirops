@@ -86,13 +86,17 @@ type ResyncConfig struct {
 }
 
 // SourceType defines where the analysis report will be written
-// +kubebuilder:validation:Enum=file;s3;blob
+// +kubebuilder:validation:Enum=file;s3;blob;pvc
 type SourceType string
 
 const (
 	SourceTypeFile SourceType = "file"
 	SourceTypeS3   SourceType = "s3"
 	SourceTypeBlob SourceType = "blob"
+	// SourceTypePVC writes the report to a PersistentVolumeClaim mounted into the operator,
+	// for on-premises clusters without cloud object storage. The PVC is mounted via the Helm
+	// chart; source.path is the directory on that volume (report is written as <name>.json).
+	SourceTypePVC SourceType = "pvc"
 )
 
 // ScopeMode defines which namespaces are included in the analysis
@@ -121,11 +125,12 @@ type ScopeConfig struct {
 
 // SourceConfig defines the output destination for the analysis report
 type SourceConfig struct {
-	// type is the storage backend for the report: file, s3, or blob
+	// type is the storage backend for the report: file, s3, blob, or pvc
 	// +kubebuilder:default=file
 	Type SourceType `json:"type"`
 
-	// path is the file path when type is "file"
+	// path is the file path when type is "file", or the directory on the mounted
+	// PersistentVolumeClaim when type is "pvc" (the report is written as <name>.json there).
 	// +optional
 	Path string `json:"path,omitempty"`
 
@@ -257,6 +262,7 @@ type UpgradeAnalysisStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Target Version",type=string,JSONPath=`.spec.targetVersion`
 // +kubebuilder:printcolumn:name="Decision",type=string,JSONPath=`.status.decision`

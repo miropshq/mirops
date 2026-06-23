@@ -12,7 +12,7 @@ spec:
     listKind: UpgradeAnalysisList
     plural: upgradeanalyses
     singular: upgradeanalysis
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.targetVersion
@@ -190,7 +190,9 @@ spec:
                       type is "s3"
                     type: string
                   path:
-                    description: path is the file path when type is "file"
+                    description: |-
+                      path is the file path when type is "file", or the directory on the mounted
+                      PersistentVolumeClaim when type is "pvc" (the report is written as <name>.json there).
                     type: string
                   region:
                     description: region is the AWS region when type is "s3"
@@ -198,11 +200,12 @@ spec:
                   type:
                     default: file
                     description: 'type is the storage backend for the report: file,
-                      s3, or blob'
+                      s3, blob, or pvc'
                     enum:
                     - file
                     - s3
                     - blob
+                    - pvc
                     type: string
                 required:
                 - type
