@@ -9,3 +9,6 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include go:embed'd data files (the compatibility matrix is embedded at build time)
+!internal/compat/matrix.yaml
