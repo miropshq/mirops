@@ -1,0 +1,150 @@
+# mirops add-on compatibility matrix.
+#
+# Each add-on maps to a list of rules: an add-on version satisfying `addonRange` is supported on
+# the Kubernetes versions in `k8sRange`. Ranges use blang/semver syntax.
+#
+# Edit by PR. Operators can also override per add-on at runtime via the
+# `mirops-compatibility-matrix` ConfigMap (same shape).
+#
+# Verification: ranges marked "verified 2026-06" were confirmed against the linked official
+# support table. Rules marked "best-effort" are extrapolated from the project's pattern and
+# should be confirmed before relying on them.
+addons:
+  # istio — https://istio.io/latest/docs/releases/supported-releases/  (verified 2026-06)
+  istio:
+    - addonRange: ">=1.26.0 <1.27.0"
+      k8sRange: ">=1.29.0 <=1.33.0"
+    - addonRange: ">=1.27.0 <1.28.0"
+      k8sRange: ">=1.29.0 <=1.33.0"
+    - addonRange: ">=1.28.0 <1.29.0"
+      k8sRange: ">=1.30.0 <=1.34.0"
+    - addonRange: ">=1.29.0 <1.30.0"
+      k8sRange: ">=1.31.0 <=1.35.0"
+    - addonRange: ">=1.30.0"
+      k8sRange: ">=1.32.0 <=1.36.0"
+
+  # cert-manager — https://cert-manager.io/docs/releases/
+  # 1.19/1.20 verified 2026-06; only two releases are supported at a time, older are best-effort.
+  cert-manager:
+    - addonRange: ">=1.15.0 <1.16.0"
+      k8sRange: ">=1.25.0 <=1.30.0"   # best-effort
+    - addonRange: ">=1.16.0 <1.17.0"
+      k8sRange: ">=1.27.0 <=1.31.0"   # best-effort
+    - addonRange: ">=1.17.0 <1.18.0"
+      k8sRange: ">=1.28.0 <=1.32.0"   # best-effort
+    - addonRange: ">=1.18.0 <1.19.0"
+      k8sRange: ">=1.29.0 <=1.34.0"   # best-effort
+    - addonRange: ">=1.19.0 <1.20.0"
+      k8sRange: ">=1.31.0 <=1.35.0"
+    - addonRange: ">=1.20.0"
+      k8sRange: ">=1.32.0 <=1.36.0"
+
+  # ingress-nginx — https://github.com/kubernetes/ingress-nginx  (verified 2026-06)
+  # NOTE: the project was archived in Mar 2026 — migrate to the Gateway API.
+  ingress-nginx:
+    - addonRange: ">=1.9.0 <1.10.0"
+      k8sRange: ">=1.25.0 <=1.29.0"
+    - addonRange: ">=1.10.0 <1.11.0"
+      k8sRange: ">=1.26.0 <=1.30.0"
+    - addonRange: ">=1.11.0 <1.12.0"
+      k8sRange: ">=1.26.0 <=1.30.0"
+    - addonRange: ">=1.12.0 <1.13.0"
+      k8sRange: ">=1.28.0 <=1.32.0"
+    - addonRange: ">=1.13.0 <1.14.0"
+      k8sRange: ">=1.29.0 <=1.33.0"
+    - addonRange: ">=1.14.0 <1.15.0"
+      k8sRange: ">=1.30.0 <=1.34.0"
+    - addonRange: ">=1.15.0"
+      k8sRange: ">=1.31.0 <=1.35.0"
+
+  # argocd — https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/
+  # 3.2/3.3/3.4 verified 2026-06; 2.x are best-effort (EOL).
+  argocd:
+    - addonRange: ">=2.11.0 <3.0.0"
+      k8sRange: ">=1.26.0 <=1.31.0"   # best-effort
+    - addonRange: ">=3.0.0 <3.2.0"
+      k8sRange: ">=1.30.0 <=1.33.0"   # best-effort
+    - addonRange: ">=3.2.0 <3.3.0"
+      k8sRange: ">=1.31.0 <=1.34.0"
+    - addonRange: ">=3.3.0"
+      k8sRange: ">=1.32.0 <=1.35.0"
+
+  # metrics-server — https://github.com/kubernetes-sigs/metrics-server  (verified 2026-06)
+  # Source gives lower bounds (e.g. "1.31+"); upper bound capped at 1.35 (forward-compatible).
+  metrics-server:
+    - addonRange: ">=0.6.0 <0.7.0"
+      k8sRange: ">=1.25.0 <=1.35.0"
+    - addonRange: ">=0.7.0 <0.8.0"
+      k8sRange: ">=1.27.0 <=1.35.0"
+    - addonRange: ">=0.8.0"
+      k8sRange: ">=1.31.0 <=1.35.0"
+
+  # cluster-autoscaler — https://github.com/kubernetes/autoscaler  (verified 2026-06)
+  # The cluster-autoscaler minor version matches the Kubernetes minor version 1:1.
+  cluster-autoscaler:
+    - addonRange: ">=1.24.0 <1.25.0"
+      k8sRange: ">=1.24.0 <1.25.0"
+    - addonRange: ">=1.25.0 <1.26.0"
+      k8sRange: ">=1.25.0 <1.26.0"
+    - addonRange: ">=1.26.0 <1.27.0"
+      k8sRange: ">=1.26.0 <1.27.0"
+    - addonRange: ">=1.27.0 <1.28.0"
+      k8sRange: ">=1.27.0 <1.28.0"
+    - addonRange: ">=1.28.0 <1.29.0"
+      k8sRange: ">=1.28.0 <1.29.0"
+    - addonRange: ">=1.29.0 <1.30.0"
+      k8sRange: ">=1.29.0 <1.30.0"
+    - addonRange: ">=1.30.0 <1.31.0"
+      k8sRange: ">=1.30.0 <1.31.0"
+    - addonRange: ">=1.31.0 <1.32.0"
+      k8sRange: ">=1.31.0 <1.32.0"
+    - addonRange: ">=1.32.0 <1.33.0"
+      k8sRange: ">=1.32.0 <1.33.0"
+    - addonRange: ">=1.33.0 <1.34.0"
+      k8sRange: ">=1.33.0 <1.34.0"
+    - addonRange: ">=1.34.0 <1.35.0"
+      k8sRange: ">=1.34.0 <1.35.0"
+    - addonRange: ">=1.35.0 <1.36.0"
+      k8sRange: ">=1.35.0 <1.36.0"
+
+  # calico — https://docs.tigera.io/calico/latest/getting-started/kubernetes/requirements
+  # 3.32 verified 2026-06 (tests 1.34–1.36); older are best-effort (each release tests ~3 minors).
+  calico:
+    - addonRange: ">=3.28.0 <3.29.0"
+      k8sRange: ">=1.27.0 <=1.30.0"   # best-effort
+    - addonRange: ">=3.29.0 <3.30.0"
+      k8sRange: ">=1.29.0 <=1.32.0"   # best-effort
+    - addonRange: ">=3.30.0 <3.31.0"
+      k8sRange: ">=1.30.0 <=1.33.0"   # best-effort
+    - addonRange: ">=3.31.0 <3.32.0"
+      k8sRange: ">=1.33.0 <=1.35.0"   # best-effort
+    - addonRange: ">=3.32.0"
+      k8sRange: ">=1.34.0 <=1.36.0"
+
+  # cilium — https://docs.cilium.io/en/stable/network/kubernetes/requirements/
+  # 1.19 verified 2026-06 (1.31–1.34); older are best-effort (~5 minors per release).
+  cilium:
+    - addonRange: ">=1.16.0 <1.17.0"
+      k8sRange: ">=1.26.0 <=1.31.0"   # best-effort
+    - addonRange: ">=1.17.0 <1.18.0"
+      k8sRange: ">=1.28.0 <=1.32.0"   # best-effort
+    - addonRange: ">=1.18.0 <1.19.0"
+      k8sRange: ">=1.30.0 <=1.33.0"   # best-effort
+    - addonRange: ">=1.19.0"
+      k8sRange: ">=1.31.0 <=1.34.0"
+
+  # external-dns — https://github.com/kubernetes-sigs/external-dns  (best-effort: no version table;
+  # broadly compatible, tracks the client-go it ships with)
+  external-dns:
+    - addonRange: ">=0.14.0 <0.15.0"
+      k8sRange: ">=1.24.0 <=1.30.0"   # best-effort
+    - addonRange: ">=0.15.0"
+      k8sRange: ">=1.26.0 <=1.35.0"   # best-effort
+
+  # prometheus (kube-prometheus-stack / prometheus-operator) —
+  # https://github.com/prometheus-operator/kube-prometheus#compatibility  (best-effort)
+  prometheus:
+    - addonRange: ">=0.68.0 <0.75.0"
+      k8sRange: ">=1.24.0 <=1.30.0"   # best-effort
+    - addonRange: ">=0.75.0"
+      k8sRange: ">=1.28.0 <=1.35.0"   # best-effort

@@ -6,9 +6,21 @@ import (
 	"github.com/miropshq/mirops/internal/collector"
 )
 
-func TestEvaluate(t *testing.T) {
-	m := DefaultMatrix()
+// testMatrix is a synthetic fixture (fake add-on names and versions) so the engine tests
+// exercise Evaluate's logic — compatible / incompatible / unknown and the requiredVersion
+// inverse lookup — without encoding any real compatibility. The real data lives only in
+// matrix.yaml and is validated separately by TestEmbeddedMatrixValid.
+var testMatrix = Matrix{
+	"addon-a": {
+		{AddonRange: ">=1.0.0 <2.0.0", K8sRange: ">=1.27.0 <=1.30.0"},
+		{AddonRange: ">=2.0.0", K8sRange: ">=1.29.0"},
+	},
+	"addon-b": {
+		{AddonRange: ">=1.0.0", K8sRange: ">=1.27.0"},
+	},
+}
 
+func TestEvaluate(t *testing.T) {
 	tests := []struct {
 		name       string
 		addon      collector.DetectedAddon
@@ -16,32 +28,26 @@ func TestEvaluate(t *testing.T) {
 		wantStatus string
 	}{
 		{
-			name:       "istio 1.21 compatible with 1.30",
-			addon:      collector.DetectedAddon{Name: "istio", Version: "1.21.0"},
+			name:       "version in range is compatible",
+			addon:      collector.DetectedAddon{Name: "addon-a", Version: "1.5.0"},
 			target:     "1.30",
 			wantStatus: StatusCompatible,
 		},
 		{
-			name:       "istio 1.21 incompatible with 1.34",
-			addon:      collector.DetectedAddon{Name: "istio", Version: "1.21.0"},
+			name:       "version out of range is incompatible",
+			addon:      collector.DetectedAddon{Name: "addon-a", Version: "1.5.0"},
 			target:     "1.34",
 			wantStatus: StatusIncompatible,
 		},
 		{
-			name:       "cert-manager 1.17 compatible with 1.34",
-			addon:      collector.DetectedAddon{Name: "cert-manager", Version: "1.17.0"},
-			target:     "1.34",
-			wantStatus: StatusCompatible,
-		},
-		{
-			name:       "unknown add-on has no data",
-			addon:      collector.DetectedAddon{Name: "mystery-operator", Version: "1.0.0"},
+			name:       "add-on with no rules is unknown",
+			addon:      collector.DetectedAddon{Name: "addon-z", Version: "1.0.0"},
 			target:     "1.31",
 			wantStatus: StatusUnknown,
 		},
 		{
 			name:       "missing version is unknown",
-			addon:      collector.DetectedAddon{Name: "istio", Version: ""},
+			addon:      collector.DetectedAddon{Name: "addon-a", Version: ""},
 			target:     "1.31",
 			wantStatus: StatusUnknown,
 		},
@@ -49,7 +55,7 @@ func TestEvaluate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, _ := Evaluate([]collector.DetectedAddon{tt.addon}, tt.target, m)
+			results, _ := Evaluate([]collector.DetectedAddon{tt.addon}, tt.target, testMatrix)
 			if len(results) != 1 {
 				t.Fatalf("expected 1 result, got %d", len(results))
 			}
@@ -60,51 +66,50 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
-// TestRequiredVersionInverseLookup verifies the Istio 1.20 → k8s 1.34 case: incompatible,
-// and requiredVersion recommends the add-on version to upgrade to (>=1.24.0).
+// TestRequiredVersionInverseLookup: an incompatible add-on reports which version to upgrade to
+// (the rule whose k8sRange covers the target). This is the highest-stakes output — the upgrade
+// recommendation the user follows.
 func TestRequiredVersionInverseLookup(t *testing.T) {
-	m := DefaultMatrix()
-	results, _ := Evaluate([]collector.DetectedAddon{{Name: "istio", Version: "1.20.0"}}, "1.34", m)
+	results, _ := Evaluate([]collector.DetectedAddon{{Name: "addon-a", Version: "1.5.0"}}, "1.34", testMatrix)
 
 	r := results[0]
 	if r.Status != StatusIncompatible {
 		t.Fatalf("status = %q, want incompatible", r.Status)
 	}
-	if r.RequiredVersion != ">=1.24.0" {
-		t.Errorf("requiredVersion = %q, want %q (upgrade target add-on version)", r.RequiredVersion, ">=1.24.0")
+	if r.RequiredVersion != ">=2.0.0" {
+		t.Errorf("requiredVersion = %q, want %q", r.RequiredVersion, ">=2.0.0")
 	}
 }
 
 func TestEvaluateCountsIncompatible(t *testing.T) {
-	m := DefaultMatrix()
 	addons := []collector.DetectedAddon{
-		{Name: "istio", Version: "1.21.0"},        // incompatible with 1.34
-		{Name: "cert-manager", Version: "1.17.0"}, // compatible with 1.34
+		{Name: "addon-a", Version: "1.5.0"}, // incompatible with 1.34
+		{Name: "addon-b", Version: "1.5.0"}, // compatible with 1.34
 	}
-	_, incompatible := Evaluate(addons, "1.34", m)
+	_, incompatible := Evaluate(addons, "1.34", testMatrix)
 	if incompatible != 1 {
 		t.Errorf("incompatible count = %d, want 1", incompatible)
 	}
 }
 
+// TestLoadMatrixOverride checks the override mechanism: a ConfigMap override adds/replaces an
+// add-on's rules while built-in add-ons are preserved.
 func TestLoadMatrixOverride(t *testing.T) {
 	override := []byte(`
 addons:
-  istio:
-    - addonRange: ">=1.0.0"
-      k8sRange: ">=1.0.0"
-      note: "overridden"
+  override-addon:
+    - addonRange: ">=0.0.0"
+      k8sRange: ">=0.0.0"
 `)
 	m, err := LoadMatrix(override)
 	if err != nil {
 		t.Fatalf("LoadMatrix: %v", err)
 	}
-	results, _ := Evaluate([]collector.DetectedAddon{{Name: "istio", Version: "1.21.0"}}, "1.34", m)
-	if results[0].Status != StatusCompatible {
-		t.Errorf("override should make istio compatible, got %q", results[0].Status)
+	if len(m["override-addon"]) != 1 {
+		t.Errorf("override add-on should have 1 rule, got %d", len(m["override-addon"]))
 	}
-	// Non-overridden add-on keeps built-in rules.
-	if _, ok := m["cert-manager"]; !ok {
-		t.Error("cert-manager rules should be preserved after override")
+	// A built-in add-on keeps its rules after an unrelated override.
+	if _, ok := m["istio"]; !ok {
+		t.Error("built-in rules should be preserved after override")
 	}
 }

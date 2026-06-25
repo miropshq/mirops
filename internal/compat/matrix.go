@@ -4,6 +4,9 @@
 package compat
 
 import (
+	_ "embed"
+	"fmt"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -36,28 +39,24 @@ const (
 	StatusUnknown      = "unknown"
 )
 
-// defaultMatrix is the built-in compatibility knowledge, used when no ConfigMap override
-// is present. Values are illustrative starting points — operators can override per cluster.
-var defaultMatrix = Matrix{
-	"istio": {
-		{AddonRange: ">=1.20.0 <1.22.0", K8sRange: ">=1.27.0 <=1.30.0"},
-		{AddonRange: ">=1.22.0 <1.24.0", K8sRange: ">=1.28.0 <=1.31.0"},
-		{AddonRange: ">=1.24.0", K8sRange: ">=1.29.0"},
-	},
-	"cert-manager": {
-		{AddonRange: ">=1.13.0 <1.15.0", K8sRange: ">=1.25.0 <=1.30.0"},
-		{AddonRange: ">=1.15.0", K8sRange: ">=1.27.0"},
-	},
-	"argocd": {
-		{AddonRange: ">=2.9.0 <2.11.0", K8sRange: ">=1.25.0 <=1.29.0"},
-		{AddonRange: ">=2.11.0", K8sRange: ">=1.26.0"},
-	},
-	"ingress-nginx": {
-		{AddonRange: ">=1.10.0", K8sRange: ">=1.27.0 <=1.31.0"},
-	},
-	"prometheus": {
-		{AddonRange: ">=0.70.0", K8sRange: ">=1.25.0"},
-	},
+//go:embed matrix.yaml
+var embeddedMatrix []byte
+
+// defaultMatrix is the built-in compatibility knowledge, loaded from the embedded matrix.yaml.
+// Edit that file (by PR) to change the built-in rules; operators can also override per add-on at
+// runtime via the mirops-compatibility-matrix ConfigMap (see LoadMatrix).
+var defaultMatrix = mustLoadEmbedded()
+
+// mustLoadEmbedded parses the embedded matrix.yaml at startup. A malformed file is a build-time
+// mistake caught by tests, so panicking here (rather than returning an error) is appropriate.
+func mustLoadEmbedded() Matrix {
+	var doc struct {
+		Addons Matrix `json:"addons"`
+	}
+	if err := yaml.Unmarshal(embeddedMatrix, &doc); err != nil {
+		panic(fmt.Sprintf("compat: invalid embedded matrix.yaml: %v", err))
+	}
+	return doc.Addons
 }
 
 // DefaultMatrix returns a copy of the built-in matrix.
