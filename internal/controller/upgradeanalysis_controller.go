@@ -216,9 +216,9 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// last so it sees the full mirror and has the last word over the base + AI decision.
 	analysis.ApplyGraphDecision(report)
 
-	// Always write report to the local reports directory so the HTTP server can serve it
-	// regardless of whether the configured source is file, s3, or blob.
-	localPath := r.ReportsDir + "/" + ua.Name + ".json"
+	// Always write the report to the reports directory so the HTTP server can serve it,
+	// regardless of source type (see reportFileName for how source.type: file names it).
+	localPath := filepath.Join(r.ReportsDir, reportFileName(ua))
 	localExp := exporter.NewFileExporter(localPath)
 	if err := localExp.Export(report); err != nil {
 		log.Error(err, "failed to write local report")
@@ -308,6 +308,17 @@ func (r *UpgradeAnalysisReconciler) loadCompatMatrix(ctx context.Context, namesp
 		return compat.DefaultMatrix(), nil
 	}
 	return compat.LoadMatrix([]byte(cm.Data["matrix.yaml"]))
+}
+
+// reportFileName returns the file name for the served report. For source.type: file the user may
+// set source.path (basename only — the directory is fixed); other types default to "<name>.json".
+func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
+	if ua.Spec.Source.Type == miropsv1.SourceTypeFile && ua.Spec.Source.Path != "" {
+		if base := filepath.Base(ua.Spec.Source.Path); base != "." && base != ".." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return ua.Name + ".json"
 }
 
 // buildExporter selects and configures the right exporter based on source.type.

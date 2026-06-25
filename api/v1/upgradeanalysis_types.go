@@ -129,8 +129,9 @@ type SourceConfig struct {
 	// +kubebuilder:default=file
 	Type SourceType `json:"type"`
 
-	// path is the file path when type is "file", or the directory on the mounted
-	// PersistentVolumeClaim when type is "pvc" (the report is written as <name>.json there).
+	// path is the report file name when type is "file" (the directory is fixed at the operator's
+	// reports dir; only the basename is used). Defaults to "<name>.json". When type is "pvc" it is
+	// the directory on the mounted PersistentVolumeClaim (the report is written as <name>.json there).
 	// +optional
 	Path string `json:"path,omitempty"`
 
