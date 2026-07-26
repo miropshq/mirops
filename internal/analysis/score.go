@@ -17,7 +17,7 @@ const (
 // Formula based on:
 //
 //	Health   (25): 25 - (notReadyRatio*15) - (restartingRatio*10)   // both proportional
-//	Capacity (30): 30 - (cpuPressure*30) - (memPressure*30)
+//	Capacity (30): 30 - (cpuPressure*15) - (memPressure*15)
 //	Stability(20): 20 - (podDelta*100*0.1) - (restartDelta*0.5) - (restartingRatio*20)
 //	Risk     (25): 25 - (deprecatedApis*5) - (addonIssues*10)
 //
@@ -121,7 +121,10 @@ func calcHealth(m Metrics) int {
 }
 
 func calcCapacity(m Metrics) int {
-	score := 30 - (m.Resources.CPUPressure * 30) - (m.Resources.MemoryPressure * 30)
+	// CPU and memory share the 30-point budget (15 each) so their combined penalty can't exceed
+	// 30 — a cluster at 50% on both is healthy and must not score 0. Note: >90% on either is a
+	// hard override (CRITICAL) handled in decide/collectBlockers; this is only the gauge below that.
+	score := 30 - (m.Resources.CPUPressure * 15) - (m.Resources.MemoryPressure * 15)
 	return clamp(int(score), 30)
 }
 
