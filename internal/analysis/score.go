@@ -18,7 +18,7 @@ const (
 //
 //	Health   (25): 25 - (notReadyRatio*15) - (restartingRatio*10)   // both proportional
 //	Capacity (30): 30 - (cpuPressure*30) - (memPressure*30)
-//	Stability(20): 20 - (podDelta*100*0.1) - (restartDelta*0.5)
+//	Stability(20): 20 - (podDelta*100*0.1) - (restartDelta*0.5) - (restartingRatio*20)
 //	Risk     (25): 25 - (deprecatedApis*5) - (addonIssues*10)
 //
 // An unstable cluster (>5% pods not ready) caps the decision at WARNING regardless of the
@@ -126,7 +126,14 @@ func calcCapacity(m Metrics) int {
 }
 
 func calcStability(m Metrics) int {
-	score := 20 - (m.Stability.PodDelta * 100 * 0.1) - (float64(m.Stability.RestartDelta) * 0.5)
+	// Abnormally-restarting pods (crash-loops at rate >= 10/24h) are instability even when the
+	// restart delta is zero — a pod stuck crash-looping is not "stable". Penalise them so a chronic
+	// crash-loop pulls the score below the SAFE bar (WARNING), while not blocking on its own.
+	restartingRatio := float64(m.Pods.Restarting) / float64(nonZeroInt(m.Pods.Total))
+	score := 20 -
+		(m.Stability.PodDelta * 100 * 0.1) -
+		(float64(m.Stability.RestartDelta) * 0.5) -
+		(restartingRatio * 20)
 	return clamp(int(score), 20)
 }
 
