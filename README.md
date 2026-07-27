@@ -1,4 +1,4 @@
-# mirops — Mirror Operations
+ # mirops — Mirror Operations
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -81,12 +81,192 @@ flowchart TD
 
 The operator produces `report.json`; these open-source tools consume it. Each lives in its own repo.
 
-| Tool | Repo | Role |
-|------|------|------|
-| **Operator** (this repo) | `miropshq/mirops` | Builds the mirror, scores, decides, serves `report.json`. |
-| **CLI** | `miropshq/mirops-cli` | `mirops scan --source … --enforce` — renders the report and **gates a CI/CD pipeline**. |
-| **Headlamp plugin** | `miropshq/mirops-ui` | Visualizes the dependency graph, decision, add-on compatibility, and per-namespace risk. |
-| **Helm chart** | `miropshq/helm-charts` (`mirops-operator/`) | Deploys the operator + RBAC + reports service. |
+| Tool | Repository | Role |
+|------|------------|------|
+| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves `report.json`. |
+| **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan --source … --enforce` — renders the report and **gates a CI/CD pipeline**. |
+| **Headlamp plugin** | [github.com/miropshq/mirops-ui](https://github.com/miropshq/mirops-ui) | Visualizes the dependency graph, decision, add-on compatibility, and per-namespace risk. |
+| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) | Deploys the operator + RBAC + reports service. |
+
+---
+
+## The mirror engine
+
+The engine (`internal/graph`) turns the snapshot into a **directed dependency graph** and propagates
+risk along its edges. Every component gets an intrinsic **base risk**; a dependent then inherits a
+**decayed** share of the highest risk it depends on — so a broken foundation raises the risk of
+everything built on it.
+
+**Base risk** (before propagation):
+
+| Component | Condition | Base risk |
+|-----------|-----------|-----------|
+| Add-on | incompatible with target | **90** |
+| Add-on | unknown compatibility | 40 |
+| Workload | Down / Failed | 70 |
+| Workload | Degraded | 40 |
+| Workload | Scaled to zero | 10 |
+| Infra (node) | NotReady | 60 |
+| Storage (PVC) | Lost | **90** |
+| Storage (PVC) | Pending | 50 |
+| Network / config | — | 0 (inherit only) |
+
+**Propagation**: a dependent inherits `risk × 0.6` (the decay) of what it depends on, taking the
+**highest** path — so a workload behind an incompatible add-on (90) inherits `90 × 0.6 = 54`. A
+component with risk **≥ 50** is flagged **at risk**. Risk is then aggregated **per namespace**
+(highest component risk, component count, at-risk count) and surfaced as `risk.byNamespace`.
+
+Propagated risk is **informational** — it colors the graph and feeds the decision only when it stems
+from a deterministic blocker (an incompatible add-on or a Lost PVC). Diffuse risk never blocks on its
+own; it tells you *where* to look.
+
+---
+
+## The readiness score
+
+The score is a **0–100 gauge** of overall cluster health — a thermometer, **not** the gate (see
+[the decision model](#the-decision-model)). It is the sum of four dimensions, each starting at its
+budget and subtracting penalties:
+
+| Dimension | Budget | Measures |
+|-----------|:------:|----------|
+| **Health** | 25 | how many pods are broken *right now* |
+| **Capacity** | 30 | CPU / memory headroom for rescheduling during the drain |
+| **Stability** | 20 | churn and crash-loops over time |
+| **Risk** (compatibility) | 25 | deprecated APIs and incompatible add-ons |
+| **Total** | **100** | |
+
+### Health (25) — proportional
+
+```
+Health = 25 − (notReady/total × 15) − (restarting/total × 10)
+```
+
+Both terms are **ratios**, so Health scales with cluster size (one bad pod out of 1000 is
+negligible; out of 6 it matters) and can never overshoot its budget. A single critical pod that these
+ratios dilute is caught instead by the graph's per-component risk and the decision guard.
+
+### Capacity (30) — shared budget
+
+```
+Capacity = 30 − (cpuPressure × 15) − (memPressure × 15)
+```
+
+CPU and memory **share** the 30 points (15 each), so a cluster at 50% on both is healthy and scores
+well — the combined penalty can't exceed 30. `pressure = requests / allocatable` (what pods
+*reserve*, which is what the scheduler uses to place rescheduled pods during a node drain). Pressure
+**> 90%** on either is a hard override → `CRITICAL` (see below), so the gauge below that line never
+bottoms out on its own.
+
+### Stability (20) — partitioned with caps
+
+```
+Stability = 20 − crash(≤10) − restartDelta(≤6) − podChurn(≤4)
+```
+
+Three signals **partition** the 20-point budget, each **capped** at its slice so no single one can
+overshoot:
+
+| Signal | Slice | Meaning |
+|--------|:-----:|---------|
+| **crash-loops** | 10 | fraction of pods crash-looping now (rate ≥ 10/24h) — the strongest signal |
+| **restart trend** | 6 | new restarts since the last run |
+| **pod churn** | 4 | fraction of pod-count change since the last run (may just be scaling → smallest slice) |
+
+Because the caps sum to 20, the combined penalty can never exceed the budget (Stability bottoms at 0,
+not negative), and the first run — which has no baseline — is bounded instead of tanking the score.
+
+### Risk / compatibility (25) — diminishing
+
+```
+Risk = 25 − 25 × (1 − 0.6^(deprecatedApis + 2 × addonIssues))
+```
+
+A **diminishing** penalty: the first compat issue hurts most and each additional one weighs less, so
+the penalty asymptotes to the 25-point budget and **can never overshoot it** — 30 incompatible
+add-ons and 3 both land near 0, without a linear penalty's runaway negatives. An add-on
+incompatibility weighs **2×** a deprecated API.
+
+> **Note on the name.** This score dimension (higher = *better*, 25 = clean) is the inverse of the
+> mirror's *graph risk* (higher = *worse*). It contributes to readiness, so bigger is healthier.
+
+---
+
+## The decision model
+
+The decision is **condition-driven**, not score-driven. The score is a gauge; the gate comes from
+deterministic facts. The report carries `decision.level` (SAFE / WARNING / CRITICAL), `decision.allow`
+(the CI gate), and `decision.blockers` (every reason it's blocked).
+
+```mermaid
+flowchart TD
+    A["Analysis"] --> B{"Hard blocker?<br/>PDB · CPU/mem >90% ·<br/>pods >block%· incompatible<br/>add-on · Lost PVC"}
+    B -->|yes| C["CRITICAL<br/>allow = false"]
+    B -->|no| D{"Unstable (pods >warn%)<br/>or score < SafeThreshold?"}
+    D -->|yes| E["WARNING<br/>allow = true"]
+    D -->|no| F["SAFE<br/>allow = true"]
+```
+
+| Level | `allow` | When |
+|-------|:-------:|------|
+| **CRITICAL** | `false` | Any deterministic blocker: a PodDisruptionBudget that would stall the drain, CPU/memory > 90%, pods-not-ready beyond the profile's **block** threshold, an **incompatible add-on**, or a **Lost PVC**. Each is listed in `decision.blockers`. |
+| **WARNING** | `true` | Cluster unstable (pods-not-ready beyond the **warn** threshold) **or** total score below the profile's `SafeThreshold`. Attention needed, but not a hard stop. |
+| **SAFE** | `true` | None of the above — ready to upgrade. |
+
+**Hard overrides**: a blocking PDB or CPU/memory > 90% also force the total score to **0**, so the
+gauge and the gate agree. A low score alone never blocks — it can only warrant a `WARNING`. Add-on and
+PVC blockers are layered on last by `ApplyGraphDecision`, which sees the full mirror.
+
+---
+
+## Scoring profiles
+
+The same operator can score a production cluster strictly and a staging cluster leniently. Select the
+profile per-analysis with `spec.scoringProfile`.
+
+| Profile | WARNING when pods-not-ready > | CRITICAL when pods-not-ready > | SAFE needs score ≥ |
+|---------|:---:|:---:|:---:|
+| **production** *(default)* | 5% | 30% | 90 |
+| **non-production** | 15% | 60% | 85 |
+
+If `scoringProfile` is empty or unrecognized, the operator **defaults to `production`** — fail-safe
+strict.
+
+---
+
+## AI scoring (optional)
+
+When `spec.ai.enabled` is true, the operator sends a digest of the mirror to Anthropic or OpenAI and
+blends the AI's score into the gauge **70/30**:
+
+```
+total = base × 0.7 + aiScore × 0.3
+```
+
+The AI can nudge the readiness number and add reasoning, but it **only touches the gauge** — it can
+never block or unblock an upgrade. The deterministic blockers always govern the gate.
+
+Create a Secret in the operator's namespace and reference it from the CR:
+
+```sh
+kubectl create secret generic mirops-ai -n mirops \
+  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+```
+
+---
+
+## Add-on compatibility
+
+The compatibility engine (`internal/compat`) ships a vendor-verified matrix (`internal/compat/matrix.yaml`,
+embedded at build time) and accepts a ConfigMap override (`mirops-compatibility-matrix` in the
+operator namespace). It currently covers ten common add-ons:
+
+**Istio, cert-manager, ingress-nginx, Argo CD, Prometheus, external-dns, metrics-server,
+cluster-autoscaler, Calico, Cilium** — across Kubernetes 1.24 – 1.35.
+
+For an incompatible add-on it computes the version you'd need to upgrade *to* (inverse lookup) and
+surfaces it in `decision.blockers` (`incompatible add-on: istio 1.20 (upgrade to 1.22)`). To extend
+or correct the matrix, edit `matrix.yaml` (a PR) or ship a ConfigMap override.
 
 ---
 
@@ -101,7 +281,7 @@ The operator produces `report.json`; these open-source tools consume it. Each li
 ### Install with Helm
 
 The CRDs are **cluster-scoped** and ship as a build artifact (not bundled in the chart). Apply the
-CRDs first, then install the chart from the `miropshq/helm-charts` repo:
+CRDs first, then install the chart from the [helm-charts](https://github.com/miropshq/helm-charts) repo:
 
 ```sh
 # 1. CRDs (cluster-scoped: UpgradeAnalysis, RemediationPlan)
@@ -114,15 +294,6 @@ helm install mirops ./mirops-operator --namespace mirops --create-namespace
 > Images: `ghcr.io/miropshq/mirops/operator` and `ghcr.io/miropshq/mirops/remediation`.
 > The chart sets `POD_NAMESPACE` so the operator reads its AI Secret and compatibility-matrix
 > ConfigMap from its own namespace (the CRDs are cluster-scoped, so the CR has no namespace).
-
-### AI scoring (optional)
-
-Create a Secret in the operator's namespace and reference it from the CR:
-
-```sh
-kubectl create secret generic mirops-ai -n mirops \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
-```
 
 ---
 
@@ -155,7 +326,9 @@ kubectl get upgradeanalysis to-1-34          # no -n: cluster-scoped
 kubectl describe upgradeanalysis to-1-34     # decision, score, reason, blockers
 ```
 
-Gate a CI/CD pipeline with the CLI:
+Re-run an analysis on demand by bumping the spec or adding the `mirops.io/refresh` annotation.
+
+Gate a CI/CD pipeline with the [CLI](https://github.com/miropshq/mirops-cli):
 
 ```sh
 mirops scan --source http://<reports-service>:8084/reports/to-1-34.json --enforce
@@ -187,19 +360,7 @@ mounted by the Helm chart (`reportPVC.enabled=true`).
 | Built against | Kubernetes `v0.34` libraries (`client-go`/`api` v0.34.1, `controller-runtime` v0.22.4) |
 | Runs on | Kubernetes **1.31 – 1.34** (recent clusters; older may work but is untested) |
 | Go | 1.24 |
-| Add-on compatibility matrix | covers target versions roughly **1.25 – 1.34** |
-
----
-
-## Add-on compatibility
-
-The compatibility engine (`internal/compat`) ships a built-in matrix and accepts a ConfigMap
-override (`mirops-compatibility-matrix` in the operator namespace). It currently recognises six
-add-ons: **Istio, cert-manager, Argo CD, ingress-nginx, external-dns, Prometheus**. For an
-incompatible add-on it computes the version you'd need to upgrade *to* (inverse lookup).
-
-> The bundled matrix data is illustrative. A community-maintained, vendor-verified `matrix.yaml`
-> (editable by PR) is on the roadmap — this section will be updated then.
+| Add-on compatibility matrix | covers target versions **1.24 – 1.35** |
 
 ---
 
@@ -213,6 +374,10 @@ make run                                    # run against ~/.kube/config
 ```
 
 See [CLAUDE.md](CLAUDE.md) for architecture, packages, the decision model, conventions, and backlog.
+
+> **Calibration note.** The scoring weights and thresholds (dimension budgets, the `0.6` decay, the
+> profile percentages) are reasoned defaults, not yet empirically validated against a corpus of real
+> upgrades. Treat the score as directional until a kind/kwok validation harness lands.
 
 ---
 

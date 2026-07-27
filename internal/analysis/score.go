@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/miropshq/mirops/internal/collector"
@@ -11,6 +12,11 @@ const (
 	levelSafe     = "SAFE"
 	levelWarning  = "WARNING"
 	levelCritical = "CRITICAL"
+
+	// riskDecay is the per-issue multiplier for the Risk dimension's diminishing penalty.
+	// Each additional compat issue multiplies the "remaining" budget by this factor, so the
+	// penalty approaches — but never exceeds — the 25-point budget. Lower = harsher first hit.
+	riskDecay = 0.6
 )
 
 // Calculate computes the upgrade readiness report from a ClusterSnapshot.
@@ -18,8 +24,8 @@ const (
 //
 //	Health   (25): 25 - (notReadyRatio*15) - (restartingRatio*10)   // both proportional
 //	Capacity (30): 30 - (cpuPressure*15) - (memPressure*15)
-//	Stability(20): 20 - (podDelta*100*0.1) - (restartDelta*0.5) - (restartingRatio*20)
-//	Risk     (25): 25 - (deprecatedApis*5) - (addonIssues*10)
+//	Stability(20): 20 - crash(<=10) - restartDelta(<=6) - podChurn(<=4)   // each capped, sums to 20
+//	Risk     (25): 25 - 25*(1 - 0.6^(deprecatedApis + 2*addonIssues))   // diminishing, never overshoots
 //
 // An unstable cluster (>5% pods not ready) caps the decision at WARNING regardless of the
 // total, so a small cluster with broken pods can't be declared SAFE.
@@ -128,21 +134,38 @@ func calcCapacity(m Metrics) int {
 	return clamp(int(score), 30)
 }
 
+// calcStability scores workload stability out of 20 from three *partitioned* signals, each capped
+// at its slice of the budget so no single one can overshoot (crash-loops 10 + restart trend 6 +
+// pod churn 4 = 20):
+//   - crash-loops (restartingRatio): pods actively crash-looping now (rate >= 10/24h) → up to 10,
+//     the strongest signal, so a chronic crash-loop pulls the score below the SAFE bar (WARNING).
+//   - restart trend (restartDelta): new restarts since the last run → up to 6.
+//   - pod churn (podDelta): fraction of pod-count change since the last run → up to 4 (a change may
+//     just be scaling, so it gets the smallest slice).
+//
+// capPenalty caps each term at its slice and floors it at 0, so the combined penalty can never
+// exceed 20 (Stability bottoms at 0, not negative) and the first run — no baseline, so podDelta=1
+// and restartDelta = all-time restarts — is bounded instead of tanking the score.
 func calcStability(m Metrics) int {
-	// Abnormally-restarting pods (crash-loops at rate >= 10/24h) are instability even when the
-	// restart delta is zero — a pod stuck crash-looping is not "stable". Penalise them so a chronic
-	// crash-loop pulls the score below the SAFE bar (WARNING), while not blocking on its own.
 	restartingRatio := float64(m.Pods.Restarting) / float64(nonZeroInt(m.Pods.Total))
-	score := 20 -
-		(m.Stability.PodDelta * 100 * 0.1) -
-		(float64(m.Stability.RestartDelta) * 0.5) -
-		(restartingRatio * 20)
+	crashPenalty := capPenalty(restartingRatio*10, 10)
+	restartPenalty := capPenalty(float64(m.Stability.RestartDelta)*0.5, 6)
+	podPenalty := capPenalty(m.Stability.PodDelta*10, 4)
+	score := 20 - crashPenalty - restartPenalty - podPenalty
 	return clamp(int(score), 20)
 }
 
+// calcRisk scores add-on/API compatibility out of 25 with a *diminishing* penalty: the first
+// compat issue hurts most and each additional one weighs less, so the penalty asymptotes to the
+// 25-point budget and can never overshoot it. A linear per-issue penalty would push far negative
+// (e.g. 30 incompatible add-ons), clamp to 0, and then be indistinguishable from a single issue;
+// the curve keeps 0 meaning "many problems" while still grading the tail. An add-on
+// incompatibility weighs 2x a deprecated API. This is only the gauge — an incompatible add-on
+// already blocks (allow=false) via collectBlockers; the number just reflects how bad compat is.
 func calcRisk(m Metrics) int {
-	score := 25 - float64(m.Compatibility.DeprecatedAPIs*5) - float64(m.Compatibility.AddonIssues*10)
-	return clamp(int(score), 25)
+	issues := float64(m.Compatibility.DeprecatedAPIs) + 2*float64(m.Compatibility.AddonIssues)
+	penalty := 25 * (1 - math.Pow(riskDecay, issues))
+	return clamp(int(25-penalty), 25)
 }
 
 // decide derives the decision level from the snapshot-only conditions. The score no longer
@@ -367,6 +390,21 @@ func clamp(v, max int) int {
 		return max
 	}
 	return v
+}
+
+// capPenalty clamps a single penalty term to [0, limit] so it can't exceed its share of a
+// dimension's budget — the mechanism that keeps a partitioned dimension from overshooting. The
+// floor at 0 also stops a negative input (e.g. a restart counter that reset lower) from turning
+// into a bonus that masks another problem.
+func capPenalty(v, limit float64) float64 {
+	switch {
+	case v < 0:
+		return 0
+	case v > limit:
+		return limit
+	default:
+		return v
+	}
 }
 
 // ApplyAIScore blends an AI score into an existing report using the 70/30 formula:
