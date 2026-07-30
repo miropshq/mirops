@@ -110,13 +110,13 @@ type Scores struct {
 
 // BaseScores is the rule-based component of the total score.
 type BaseScores struct {
-	Score        int    `json:"score"`
-	Weight       string `json:"weight"`
-	Contribution int    `json:"contribution"`
-	Health       int    `json:"health"`
-	Capacity     int    `json:"capacity"`
-	Stability    int    `json:"stability"`
-	Risk         int    `json:"risk"`
+	Score         int    `json:"score"`
+	Weight        string `json:"weight"`
+	Contribution  int    `json:"contribution"`
+	Health        int    `json:"health"`
+	Capacity      int    `json:"capacity"`
+	Stability     int    `json:"stability"`
+	Compatibility int    `json:"compatibility"`
 }
 
 // AIScores is the AI model component of the total score.
@@ -148,7 +148,7 @@ type ResourceMetrics struct {
 }
 
 type StabilityMetrics struct {
-	PodDelta     float64 `json:"podDelta"`
+	PodDropRatio float64 `json:"podDropRatio"` // fraction of pods lost since the last run (0 on growth)
 	RestartDelta int     `json:"restartDelta"`
 }
 

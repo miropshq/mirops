@@ -133,7 +133,7 @@ budget and subtracting penalties:
 | **Health** | 25 | how many pods are broken *right now* |
 | **Capacity** | 30 | CPU / memory headroom for rescheduling during the drain |
 | **Stability** | 20 | churn and crash-loops over time |
-| **Risk** (compatibility) | 25 | deprecated APIs and incompatible add-ons |
+| **Compatibility** | 25 | deprecated APIs and incompatible add-ons |
 | **Total** | **100** | |
 
 ### Health (25) — proportional
@@ -176,10 +176,10 @@ overshoot:
 Because the caps sum to 20, the combined penalty can never exceed the budget (Stability bottoms at 0,
 not negative), and the first run — which has no baseline — is bounded instead of tanking the score.
 
-### Risk / compatibility (25) — diminishing
+### Compatibility (25) — diminishing
 
 ```
-Risk = 25 − 25 × (1 − 0.6^(deprecatedApis + 2 × addonIssues))
+Compatibility = 25 − 25 × (1 − 0.6^(deprecatedApis + 2 × addonIssues))
 ```
 
 A **diminishing** penalty: the first compat issue hurts most and each additional one weighs less, so
@@ -187,8 +187,10 @@ the penalty asymptotes to the 25-point budget and **can never overshoot it** —
 add-ons and 3 both land near 0, without a linear penalty's runaway negatives. An add-on
 incompatibility weighs **2×** a deprecated API.
 
-> **Note on the name.** This score dimension (higher = *better*, 25 = clean) is the inverse of the
-> mirror's *graph risk* (higher = *worse*). It contributes to readiness, so bigger is healthier.
+> **Naming.** This dimension is called `compatibility` (higher = *better*, 25 = clean) — deliberately
+> **not** "risk", to avoid colliding with the mirror's *graph risk* (`risk.byNamespace`, higher =
+> *worse*). The score dimension contributes to readiness, so bigger is healthier; graph risk is a
+> severity, so bigger is worse.
 
 ---
 

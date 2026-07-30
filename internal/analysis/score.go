@@ -13,10 +13,10 @@ const (
 	levelWarning  = "WARNING"
 	levelCritical = "CRITICAL"
 
-	// riskDecay is the per-issue multiplier for the Risk dimension's diminishing penalty.
-	// Each additional compat issue multiplies the "remaining" budget by this factor, so the
-	// penalty approaches — but never exceeds — the 25-point budget. Lower = harsher first hit.
-	riskDecay = 0.6
+	// compatDecay is the per-issue multiplier for the Compatibility dimension's diminishing
+	// penalty. Each additional compat issue multiplies the "remaining" budget by this factor, so
+	// the penalty approaches — but never exceeds — the 25-point budget. Lower = harsher first hit.
+	compatDecay = 0.6
 )
 
 // Calculate computes the upgrade readiness report from a ClusterSnapshot.
@@ -24,8 +24,8 @@ const (
 //
 //	Health   (25): 25 - (notReadyRatio*15) - (restartingRatio*10)   // both proportional
 //	Capacity (30): 30 - (cpuPressure*15) - (memPressure*15)
-//	Stability(20): 20 - crash(<=10) - restartDelta(<=6) - podChurn(<=4)   // each capped, sums to 20
-//	Risk     (25): 25 - 25*(1 - 0.6^(deprecatedApis + 2*addonIssues))   // diminishing, never overshoots
+//	Stability(20): 20 - crash(<=10) - restartDelta(<=6) - podDrop(<=4)   // each capped, sums to 20
+//	Compat   (25): 25 - 25*(1 - 0.6^(deprecatedApis + 2*addonIssues))   // diminishing, never overshoots
 //
 // An unstable cluster (>5% pods not ready) caps the decision at WARNING regardless of the
 // total, so a small cluster with broken pods can't be declared SAFE.
@@ -37,8 +37,8 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName strin
 	health := calcHealth(m)
 	capacity := calcCapacity(m)
 	stability := calcStability(m)
-	risk := calcRisk(m)
-	total := health + capacity + stability + risk
+	compatibility := calcCompatibility(m)
+	total := health + capacity + stability + compatibility
 
 	// Hard overrides
 	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure {
@@ -62,13 +62,13 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName strin
 		Scores: Scores{
 			Total: total,
 			Base: BaseScores{
-				Score:        total,
-				Weight:       "100%",
-				Contribution: total,
-				Health:       health,
-				Capacity:     capacity,
-				Stability:    stability,
-				Risk:         risk,
+				Score:         total,
+				Weight:        "100%",
+				Contribution:  total,
+				Health:        health,
+				Capacity:      capacity,
+				Stability:     stability,
+				Compatibility: compatibility,
 			},
 		},
 		Conditions: c,
@@ -91,7 +91,7 @@ func buildMetrics(snap *collector.ClusterSnapshot) Metrics {
 			MemoryPressure: snap.MemRequests / nonZero(snap.MemCapacity),
 		},
 		Stability: StabilityMetrics{
-			PodDelta:     abs(float64(snap.TotalPods-snap.PreviousTotalPods)) / float64(nonZeroInt(snap.TotalPods)),
+			PodDropRatio: podDropRatio(snap),
 			RestartDelta: snap.TotalRestarts - snap.PreviousRestarts,
 		},
 		Compatibility: CompatibilityMetrics{
@@ -136,35 +136,35 @@ func calcCapacity(m Metrics) int {
 
 // calcStability scores workload stability out of 20 from three *partitioned* signals, each capped
 // at its slice of the budget so no single one can overshoot (crash-loops 10 + restart trend 6 +
-// pod churn 4 = 20):
+// pod drop 4 = 20):
 //   - crash-loops (restartingRatio): pods actively crash-looping now (rate >= 10/24h) → up to 10,
 //     the strongest signal, so a chronic crash-loop pulls the score below the SAFE bar (WARNING).
 //   - restart trend (restartDelta): new restarts since the last run → up to 6.
-//   - pod churn (podDelta): fraction of pod-count change since the last run → up to 4 (a change may
-//     just be scaling, so it gets the smallest slice).
+//   - pod drop (podDropRatio): fraction of pods lost since the last run → up to 4. Only drops
+//     count — scaling up is healthy activity, not instability — so it gets the smallest slice.
 //
 // capPenalty caps each term at its slice and floors it at 0, so the combined penalty can never
-// exceed 20 (Stability bottoms at 0, not negative) and the first run — no baseline, so podDelta=1
-// and restartDelta = all-time restarts — is bounded instead of tanking the score.
+// exceed 20 (Stability bottoms at 0, not negative). The first run has no baseline, so podDropRatio
+// is 0 (a jump from 0 pods isn't a drop) and restartDelta = all-time restarts is bounded by its cap.
 func calcStability(m Metrics) int {
 	restartingRatio := float64(m.Pods.Restarting) / float64(nonZeroInt(m.Pods.Total))
 	crashPenalty := capPenalty(restartingRatio*10, 10)
 	restartPenalty := capPenalty(float64(m.Stability.RestartDelta)*0.5, 6)
-	podPenalty := capPenalty(m.Stability.PodDelta*10, 4)
+	podPenalty := capPenalty(m.Stability.PodDropRatio*10, 4)
 	score := 20 - crashPenalty - restartPenalty - podPenalty
 	return clamp(int(score), 20)
 }
 
-// calcRisk scores add-on/API compatibility out of 25 with a *diminishing* penalty: the first
+// calcCompatibility scores add-on/API compatibility out of 25 with a *diminishing* penalty: the first
 // compat issue hurts most and each additional one weighs less, so the penalty asymptotes to the
 // 25-point budget and can never overshoot it. A linear per-issue penalty would push far negative
 // (e.g. 30 incompatible add-ons), clamp to 0, and then be indistinguishable from a single issue;
 // the curve keeps 0 meaning "many problems" while still grading the tail. An add-on
 // incompatibility weighs 2x a deprecated API. This is only the gauge — an incompatible add-on
 // already blocks (allow=false) via collectBlockers; the number just reflects how bad compat is.
-func calcRisk(m Metrics) int {
+func calcCompatibility(m Metrics) int {
 	issues := float64(m.Compatibility.DeprecatedAPIs) + 2*float64(m.Compatibility.AddonIssues)
-	penalty := 25 * (1 - math.Pow(riskDecay, issues))
+	penalty := 25 * (1 - math.Pow(compatDecay, issues))
 	return clamp(int(25-penalty), 25)
 }
 
@@ -375,11 +375,14 @@ func nonZeroInt(v int) int {
 	return v
 }
 
-func abs(v float64) float64 {
-	if v < 0 {
-		return -v
+// podDropRatio is the fraction of pods lost since the previous run, and 0 when the count grew or
+// held. Only drops count: a growing pod count is healthy activity (scaling up), not instability.
+func podDropRatio(snap *collector.ClusterSnapshot) float64 {
+	dropped := snap.PreviousTotalPods - snap.TotalPods
+	if dropped < 0 {
+		return 0
 	}
-	return v
+	return float64(dropped) / float64(nonZeroInt(snap.TotalPods))
 }
 
 func clamp(v, max int) int {
