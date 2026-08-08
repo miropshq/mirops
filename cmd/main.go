@@ -198,11 +198,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start reports HTTP server — serves report JSON files regardless of
-	// whether the configured source is file, s3, or blob.
+	// Start reports HTTP server. File destinations are served from disk; remote destinations
+	// (s3/blob/pvc) are read back on demand — no local replica — and a connection failure returns
+	// 502 with a JSON error the UI can show.
+	reportServer := &controller.ReportServer{
+		Client:            mgr.GetClient(),
+		ReportsDir:        reportsDir,
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+	}
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/reports/", corsMiddleware(http.StripPrefix("/reports/", http.FileServer(http.Dir(reportsDir)))))
+		mux.Handle("/reports/", corsMiddleware(http.StripPrefix("/reports/", reportServer)))
 		setupLog.Info("starting reports server", "addr", reportsAddr, "dir", reportsDir)
 		if err := http.ListenAndServe(reportsAddr, mux); err != nil {
 			setupLog.Error(err, "reports server failed")

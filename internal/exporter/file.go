@@ -39,6 +39,14 @@ func (e *FileExporter) Export(report *analysis.Report) error {
 	return nil
 }
 
+func (e *FileExporter) Read() ([]byte, error) {
+	data, err := os.ReadFile(e.Path)
+	if err != nil {
+		return nil, fmt.Errorf("reading report file %s: %w", e.Path, err)
+	}
+	return data, nil
+}
+
 func (e *FileExporter) Location() string {
 	return e.Path
 }

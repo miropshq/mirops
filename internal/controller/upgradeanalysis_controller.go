@@ -216,26 +216,43 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// last so it sees the full mirror and has the last word over the base + AI decision.
 	analysis.ApplyGraphDecision(report)
 
-	// Always write the report to the reports directory so the HTTP server can serve it,
-	// regardless of source type (see reportFileName for how source.type: file names it).
-	localPath := filepath.Join(r.ReportsDir, reportFileName(ua))
-	localExp := exporter.NewFileExporter(localPath)
-	if err := localExp.Export(report); err != nil {
-		log.Error(err, "failed to write local report")
-		return ctrl.Result{}, err
-	}
-	log.Info("Report written locally", "path", localPath)
-
-	// Additionally export to the configured destination (S3, Azure Blob, or PVC).
-	if t := ua.Spec.Source.Type; t == miropsv1.SourceTypeS3 || t == miropsv1.SourceTypeBlob || t == miropsv1.SourceTypePVC {
-		exp, err := r.buildExporter(ctx, ua)
+	// Persist the report. The default (file) destination writes to the local reports dir the HTTP
+	// server serves. Remote destinations (s3/blob/pvc) are written ONLY there — no local replica in
+	// the pod — and the HTTP server reads them back on demand. A failure is recorded on the status
+	// (reportState/reportError) so it surfaces in the UI instead of hiding in the pod logs.
+	var reportErr error
+	switch t := ua.Spec.Source.Type; t {
+	case miropsv1.SourceTypeS3, miropsv1.SourceTypeBlob, miropsv1.SourceTypePVC:
+		ua.Status.ReportPath = ""
+		exp, err := buildExporter(ctx, r.Client, r.OperatorNamespace, ua)
 		if err != nil {
-			log.Error(err, "failed to build exporter")
-		} else if err := exp.Export(report); err != nil {
-			log.Error(err, "failed to export report")
+			reportErr = err
+			ua.Status.ReportLocation = ""
 		} else {
-			log.Info("Report exported", "type", t, "location", exp.Location())
+			ua.Status.ReportLocation = exp.Location()
+			if err := exp.Export(report); err != nil {
+				reportErr = err
+			} else {
+				log.Info("Report exported", "type", t, "location", exp.Location())
+			}
 		}
+	default:
+		localPath := filepath.Join(r.ReportsDir, reportFileName(ua))
+		if err := exporter.NewFileExporter(localPath).Export(report); err != nil {
+			reportErr = err
+		} else {
+			log.Info("Report written locally", "path", localPath)
+		}
+		ua.Status.ReportPath = localPath
+		ua.Status.ReportLocation = localPath
+	}
+	if reportErr != nil {
+		log.Error(reportErr, "failed to persist report")
+		ua.Status.ReportState = reportStateFailed
+		ua.Status.ReportError = reportErr.Error()
+	} else {
+		ua.Status.ReportState = reportStateWritten
+		ua.Status.ReportError = ""
 	}
 
 	// Update CR status
@@ -244,7 +261,6 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	ua.Status.AIScore = report.Scores.AI.Score
 	ua.Status.AIReasoning = report.AIReasoning
 	ua.Status.Reason = report.Reason
-	ua.Status.ReportPath = localPath
 	ua.Status.LastAnalysisTime = &metav1.Time{Time: now}
 	ua.Status.LastRefresh = ua.Annotations[refreshAnnotation]
 	ua.Status.ObservedGeneration = ua.Generation
@@ -312,6 +328,12 @@ func (r *UpgradeAnalysisReconciler) loadCompatMatrix(ctx context.Context, namesp
 
 // reportFileName returns the file name for the served report. For source.type: file the user may
 // set source.path (basename only — the directory is fixed); other types default to "<name>.json".
+// reportState values recorded on UpgradeAnalysis.status.reportState.
+const (
+	reportStateWritten = "written"
+	reportStateFailed  = "failed"
+)
+
 func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
 	if ua.Spec.Source.Type == miropsv1.SourceTypeFile && ua.Spec.Source.Path != "" {
 		if base := filepath.Base(ua.Spec.Source.Path); base != "." && base != ".." && base != string(filepath.Separator) {
@@ -323,16 +345,19 @@ func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
 
 // buildExporter selects and configures the right exporter based on source.type.
 // When credentialsSecret is set, it reads credentials from the referenced Secret.
-func (r *UpgradeAnalysisReconciler) buildExporter(ctx context.Context, ua *miropsv1.UpgradeAnalysis) (exporter.Exporter, error) {
+// buildExporter constructs the Exporter for a CR's configured destination. It is a package
+// function (not a method) so both the reconciler and the reports HTTP server can build the same
+// exporter to write and read back a report.
+func buildExporter(ctx context.Context, c client.Client, operatorNamespace string, ua *miropsv1.UpgradeAnalysis) (exporter.Exporter, error) {
 	src := ua.Spec.Source
 
 	// Read optional credentials secret
 	var secretData map[string][]byte
 	if src.CredentialsSecret != "" {
 		secret := &corev1.Secret{}
-		if err := r.Client.Get(ctx, types.NamespacedName{
+		if err := c.Get(ctx, types.NamespacedName{
 			Name:      src.CredentialsSecret,
-			Namespace: r.OperatorNamespace,
+			Namespace: operatorNamespace,
 		}, secret); err != nil {
 			return nil, fmt.Errorf("reading credentials secret %q: %w", src.CredentialsSecret, err)
 		}

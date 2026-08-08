@@ -234,9 +234,24 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// reportPath is where the JSON report was written
+	// reportPath is where the JSON report was written (local file destination only)
 	// +optional
 	ReportPath string `json:"reportPath,omitempty"`
+
+	// reportState is the outcome of persisting the report: "written" or "failed".
+	// +optional
+	// +kubebuilder:validation:Enum=written;failed
+	ReportState string `json:"reportState,omitempty"`
+
+	// reportError is the error message when the report could not be written to (or read back from)
+	// its destination — e.g. an S3/Blob/PVC connection failure. Empty on success. Surfaced to the
+	// UI so a remote-storage failure isn't hidden in the pod logs.
+	// +optional
+	ReportError string `json:"reportError,omitempty"`
+
+	// reportLocation is where the report was written: a local path, or an s3://, blob, or pvc URI.
+	// +optional
+	ReportLocation string `json:"reportLocation,omitempty"`
 
 	// aiScore is the score returned by the AI model (0-100), 0 when AI is disabled
 	// +optional

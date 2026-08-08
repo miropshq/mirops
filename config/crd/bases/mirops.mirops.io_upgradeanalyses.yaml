@@ -337,8 +337,26 @@ spec:
               reason:
                 description: reason is a human-readable explanation of the decision
                 type: string
+              reportError:
+                description: |-
+                  reportError is the error message when the report could not be written to (or read back from)
+                  its destination — e.g. an S3/Blob/PVC connection failure. Empty on success. Surfaced to the
+                  UI so a remote-storage failure isn't hidden in the pod logs.
+                type: string
+              reportLocation:
+                description: 'reportLocation is where the report was written: a local
+                  path, or an s3://, blob, or pvc URI.'
+                type: string
               reportPath:
-                description: reportPath is where the JSON report was written
+                description: reportPath is where the JSON report was written (local
+                  file destination only)
+                type: string
+              reportState:
+                description: 'reportState is the outcome of persisting the report:
+                  "written" or "failed".'
+                enum:
+                - written
+                - failed
                 type: string
               totalScore:
                 description: totalScore is the computed upgrade readiness score (0-100)
