@@ -62,7 +62,7 @@ flowchart TD
     H --> I["report.json<br/>HTTP :8084 + optional s3 / blob / pvc"]
     I --> J["mirops-cli (CI gate)"]
     I --> K["Headlamp plugin (graph UI)"]
-    H --> L["UpgradeAnalysis .status<br/>(decision, score, reason)"]
+    H --> L["UpgradeAnalysis .status<br/>(decision, score, reason, reportState)"]
 ```
 
 - **Logical mirror**: every workload/service/node/PVC/add-on becomes a node; dependencies become
@@ -161,7 +161,7 @@ bottoms out on its own.
 ### Stability (20) — partitioned with caps
 
 ```
-Stability = 20 − crash(≤10) − restartDelta(≤6) − podChurn(≤4)
+Stability = 20 − crash(≤10) − restartDelta(≤6) − podDrop(≤4)
 ```
 
 Three signals **partition** the 20-point budget, each **capped** at its slice so no single one can
@@ -171,7 +171,7 @@ overshoot:
 |--------|:-----:|---------|
 | **crash-loops** | 10 | fraction of pods crash-looping now (rate ≥ 10/24h) — the strongest signal |
 | **restart trend** | 6 | new restarts since the last run |
-| **pod churn** | 4 | fraction of pod-count change since the last run (may just be scaling → smallest slice) |
+| **pod drop** | 4 | fraction of pods lost since the last run (only drops count — scaling up is healthy activity, not instability → smallest slice) |
 
 Because the caps sum to 20, the combined penalty can never exceed the budget (Stability bottoms at 0,
 not negative), and the first run — which has no baseline — is bounded instead of tanking the score.
@@ -218,6 +218,38 @@ flowchart TD
 **Hard overrides**: a blocking PDB or CPU/memory > 90% also force the total score to **0**, so the
 gauge and the gate agree. A low score alone never blocks — it can only warrant a `WARNING`. Add-on and
 PVC blockers are layered on last by `ApplyGraphDecision`, which sees the full mirror.
+
+---
+
+## Verdict vs health — two separate axes
+
+The score answers *"how healthy is the cluster?"*; the decision answers *"can I upgrade?"*. They are
+**independent axes**, so a healthy cluster can still be blocked — an incompatible add-on doesn't
+affect how the cluster runs today, but it breaks the upgrade. Consumers (the CLI and the Headlamp
+plugin) present the two separately so a high score never *contradicts* a blocked verdict:
+
+- **Health band** (from the score): `SAFE` (≥ `SafeThreshold`), `FAIR` (60 – below threshold),
+  `AT RISK` (< 60). Health words only — the gauge never says "blocked".
+- **Verdict** (from `decision.level`): `Allowed` (SAFE), `Not recommended` (WARNING), `Blocked`
+  (CRITICAL). This is the semaphore / go-no-go.
+
+| Health band (score) | Verdict (decision) | Presented as | Reachable? |
+|---------------------|--------------------|--------------|:----------:|
+| 🟢 SAFE | 🟢 Allowed | **Upgrade allowed** | ✅ |
+| 🟢 SAFE | 🟡 Not recommended | e.g. score 91, unstable pods | ✅ |
+| 🟢 SAFE | 🔴 Blocked | healthy but a blocker (e.g. a Lost PVC) | ✅ |
+| 🟡 FAIR | 🟢 Allowed | — | ❌ |
+| 🟡 FAIR | 🟡 Not recommended | needs attention | ✅ |
+| 🟡 FAIR | 🔴 Blocked | low score **and** a blocker | ✅ |
+| 🔴 AT RISK | 🟢 Allowed | — | ❌ |
+| 🔴 AT RISK | 🟡 Not recommended | poor health, not blocked | ✅ |
+| 🔴 AT RISK | 🔴 Blocked | poor health **and** a blocker | ✅ |
+
+Two rows are **impossible**: a score below the profile's `SafeThreshold` always trips at least a
+`WARNING` (the `total < SafeThreshold` rule), so a below-threshold band can never pair with an
+`Allowed` verdict. The colour follows the **verdict** (the actionable state); the word leads with the
+**health band** — so "SAFE + Not recommended" reads as *"healthy, but stabilise before upgrading"*,
+not a contradiction.
 
 ---
 
@@ -341,17 +373,28 @@ mirops scan --source http://<reports-service>:8084/reports/to-1-34.json --enforc
 
 ## Report destinations
 
-The report is always served locally over HTTP (`:8084`). `spec.source.type` adds a destination:
+`spec.source.type` selects where the report is written. The default (`file`) is written to the pod
+and served over HTTP (`:8084`). A **remote** destination (`s3` / `blob` / `pvc`) keeps **no local
+replica in the pod** — the operator writes only to the destination and **reads the report back on
+demand** (in memory) to serve it, using its own credentials so the connection never leaves the
+operator (e.g. IRSA for S3, inside AWS).
 
 | Type | Purpose | Key fields |
 |------|---------|------------|
-| `file` | Write to the controller filesystem (default; ephemeral `emptyDir`) | `path` |
-| `s3` | Upload to Amazon S3 | `bucket`, `region`, `key`, `credentialsSecret` |
-| `blob` | Upload to Azure Blob Storage | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
-| `pvc` | Persist to a PersistentVolumeClaim (on-prem, no cloud storage) | `path` (PVC mount dir; report written as `<name>.json`) |
+| `file` | Local file in the pod (default; ephemeral `emptyDir`), served over HTTP | `path` |
+| `s3` | Amazon S3 — no local replica | `bucket`, `region`, `key`, `credentialsSecret` |
+| `blob` | Azure Blob Storage — no local replica | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
+| `pvc` | PersistentVolumeClaim (on-prem, no cloud) — no local replica | `path` (mount dir; report written as `<name>.json`) |
 
-`credentialsSecret` (for s3/blob) is read from the **operator's** namespace. The `pvc` volume is
-mounted by the Helm chart (`reportPVC.enabled=true`).
+`credentialsSecret` is **optional** — leave it empty to use **IRSA** (S3) or **Workload / Managed
+Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
+The `pvc` volume is mounted by the Helm chart (`reportPVC.enabled=true`).
+
+**Failures are surfaced, not hidden.** When the operator can't write to (or read back from) a remote
+destination, it records the outcome on the CR — `status.reportState` (`written` / `failed`),
+`status.reportError` (the message), and `status.reportLocation` — so a storage failure shows in
+`kubectl describe` and the UI instead of only the pod logs. Deleting the CR **never** deletes the
+report from S3/Blob/PVC — there is no cleanup finalizer.
 
 ---
 
@@ -374,8 +417,6 @@ make manifests                              # regenerate CRDs + RBAC
 make lint                                   # golangci-lint (strict)
 make run                                    # run against ~/.kube/config
 ```
-
-See [CLAUDE.md](CLAUDE.md) for architecture, packages, the decision model, conventions, and backlog.
 
 > **Calibration note.** The scoring weights and thresholds (dimension budgets, the `0.6` decay, the
 > profile percentages) are reasoned defaults, not yet empirically validated against a corpus of real
