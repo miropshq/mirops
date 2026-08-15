@@ -80,11 +80,11 @@ func evaluateAddon(a collector.DetectedAddon, target semver.Version, targetOK bo
 	res.Status = StatusIncompatible
 	res.RequiredVersion = requiredAddonVersion(rules, target)
 	if res.RequiredVersion != "" {
-		res.Note = fmt.Sprintf("current version supports k8s %s; upgrade to add-on %s for the target version",
-			applicable[0].K8sRange, res.RequiredVersion)
+		res.Note = fmt.Sprintf("%s %s supports Kubernetes %s; upgrade %s to %s to support Kubernetes %d.%d",
+			res.Name, res.Version, applicable[0].K8sRange, res.Name, res.RequiredVersion, target.Major, target.Minor)
 	} else {
-		res.Note = fmt.Sprintf("current version supports k8s %s; no known add-on version supports the target version",
-			applicable[0].K8sRange)
+		res.Note = fmt.Sprintf("%s %s supports Kubernetes %s; no known %s version supports Kubernetes %d.%d",
+			res.Name, res.Version, applicable[0].K8sRange, res.Name, target.Major, target.Minor)
 	}
 	return res
 }
