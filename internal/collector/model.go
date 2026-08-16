@@ -56,6 +56,17 @@ type Workload struct {
 	UsesIstioSidecar bool
 }
 
+// BarePod is a standalone Pod with no controlling workload (created directly — `kubectl run`, a raw
+// Pod manifest). These aren't represented by any workload node, so they are mirrored individually;
+// otherwise a failing bare pod would be invisible to the dependency graph and its namespace risk.
+// Status is readiness-derived ("Down" when not ready) so the risk engine flags it like a Down
+// workload.
+type BarePod struct {
+	Namespace string
+	Name      string
+	Status    string // "Running" when ready, "Down" when not ready
+}
+
 // PVCRef represents a PersistentVolumeClaim for the dependency graph (stateful data at
 // risk during a node drain).
 type PVCRef struct {
@@ -197,6 +208,7 @@ type ClusterSnapshot struct {
 	Ingresses      []IngressRef
 	DetectedAddons []DetectedAddon
 	Workloads      []Workload // all workloads, every kind, healthy or not
+	BarePods       []BarePod  // standalone pods with no owning workload
 	PVCs           []PVCRef
 
 	// Workload hierarchy (for report workloads section)

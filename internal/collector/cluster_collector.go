@@ -102,6 +102,22 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		// Record which node this pod runs on, attributed to its logical workload.
 		recordPodNode(&pod, rsToDeploy, nodesByWorkload)
 
+		// Standalone pods (no controller owner) aren't represented by any workload node, so mirror
+		// them individually — a failing bare pod would otherwise be invisible to the graph and its
+		// namespace risk. Pods owned by a ReplicaSet/Job/Node (incl. mirror pods) are skipped: their
+		// workload or node already stands in for them.
+		if len(pod.OwnerReferences) == 0 {
+			status := "Running"
+			if !isPodReady(&pod) {
+				status = "Down"
+			}
+			snapshot.BarePods = append(snapshot.BarePods, BarePod{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+				Status:    status,
+			})
+		}
+
 		if !isPodReady(&pod) {
 			snapshot.NotReadyPods++
 			reason := podNotReadyReason(&pod)

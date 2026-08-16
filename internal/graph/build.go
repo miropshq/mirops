@@ -18,6 +18,7 @@ func BuildFromSnapshot(snap *collector.ClusterSnapshot) *Graph {
 	b.addAddons(snap)    // Addon/*
 	b.addInfra(snap)     // Node/*
 	b.addWorkloads(snap) // Deployment/*, StatefulSet/*, DaemonSet/*, Job/*, CronJob/*
+	b.addBarePods(snap)  // Pod/* (standalone pods with no owning workload)
 	b.addNetwork(snap)   // Service/*, Ingress/*
 	b.addStorage(snap)   // PVC/*
 
@@ -101,6 +102,19 @@ func (b *builder) addWorkloads(snap *collector.ClusterSnapshot) {
 		b.workloads = append(b.workloads, workloadRef{
 			id: nid, namespace: w.Namespace, labels: w.PodLabels,
 			refs: w.ConfigRefs, pvcs: w.PVCs, nodes: w.Nodes, istio: w.UsesIstioSidecar,
+		})
+	}
+}
+
+// addBarePods mirrors standalone pods (no owning workload) as individual nodes, so a failing bare
+// pod surfaces in the graph and colors its namespace risk. They are workload-typed: the risk engine
+// scores a not-ready one ("Down") at the workload base risk, while a healthy one sits at 0 —
+// present but harmless, exactly like a healthy workload node. No edges: a bare pod has no dependents.
+func (b *builder) addBarePods(snap *collector.ClusterSnapshot) {
+	for _, p := range snap.BarePods {
+		b.addNode(Component{
+			ID: id("Pod", p.Namespace, p.Name), Kind: "Pod", Name: p.Name,
+			Namespace: p.Namespace, Type: TypeWorkload, Status: p.Status,
 		})
 	}
 }
