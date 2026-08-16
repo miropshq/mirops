@@ -40,11 +40,10 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName strin
 	compatibility := calcCompatibility(m)
 	total := health + capacity + stability + compatibility
 
-	// Hard overrides
-	if c.PDBBlocking || c.HighCPUPressure || c.HighMemoryPressure {
-		total = 0
-	}
-
+	// No score override here on purpose: the score is a readiness gauge, not the gate. A PDB that
+	// would stall the drain, or CPU/memory exhaustion, blocks the upgrade through decide() (the
+	// verdict), independent of the number — so the gauge keeps reporting actual health instead of
+	// collapsing to 0. CPU/memory pressure is still reflected proportionally via calcCapacity.
 	level, allow := decide(total, c, profile)
 
 	issues := buildIssues(snap)
