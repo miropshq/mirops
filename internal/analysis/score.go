@@ -341,6 +341,19 @@ func buildWorkloads(snap *collector.ClusterSnapshot) ReportWorkloads {
 		pdbs = append(pdbs, PDBReport{Namespace: pdb.Namespace, Name: pdb.Name})
 	}
 
+	pvcs := make([]PVCReport, 0, len(snap.PVCs))
+	for _, p := range snap.PVCs {
+		pvcs = append(pvcs, PVCReport{
+			Namespace: p.Namespace, Name: p.Name,
+			StorageClass: p.StorageClass, Phase: p.Phase,
+		})
+	}
+
+	barePods := make([]BarePodReport, 0, len(snap.BarePods))
+	for _, p := range snap.BarePods {
+		barePods = append(barePods, BarePodReport{Namespace: p.Namespace, Name: p.Name, Status: p.Status})
+	}
+
 	apis := make([]DeprecatedAPIReport, 0, len(snap.DeprecatedAPIList))
 	for _, api := range snap.DeprecatedAPIList {
 		apis = append(apis, DeprecatedAPIReport{
@@ -356,6 +369,8 @@ func buildWorkloads(snap *collector.ClusterSnapshot) ReportWorkloads {
 		DaemonSets:     daemonsets,
 		Jobs:           jobs,
 		PDBs:           pdbs,
+		PVCs:           pvcs,
+		BarePods:       barePods,
 		DeprecatedAPIs: apis,
 	}
 }

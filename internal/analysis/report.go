@@ -43,6 +43,8 @@ type ReportWorkloads struct {
 	DaemonSets     []DaemonSetReport     `json:"daemonsets"`
 	Jobs           []JobReport           `json:"jobs"`
 	PDBs           []PDBReport           `json:"pdbs,omitempty"`
+	PVCs           []PVCReport           `json:"pvcs,omitempty"`
+	BarePods       []BarePodReport       `json:"barePods,omitempty"`
 	DeprecatedAPIs []DeprecatedAPIReport `json:"deprecatedApis,omitempty"`
 }
 
@@ -93,6 +95,19 @@ type JobReport struct {
 type PDBReport struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+}
+
+type PVCReport struct {
+	Namespace    string `json:"namespace"`
+	Name         string `json:"name"`
+	StorageClass string `json:"storageClass,omitempty"`
+	Phase        string `json:"phase"` // Bound | Pending | Lost
+}
+
+type BarePodReport struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Status    string `json:"status"` // Running | Down
 }
 
 type DeprecatedAPIReport struct {
