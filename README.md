@@ -111,6 +111,10 @@ everything built on it.
 | Storage (PVC) | Pending | 50 |
 | Network / config | — | 0 (inherit only) |
 
+Standalone **pods** with no owning workload (a raw `kubectl run` / Pod manifest) are mirrored too, as
+workload-typed nodes: a not-ready bare pod scores like a Down workload (**70**), so a failing pod that
+no Deployment covers still surfaces in the graph and its namespace risk.
+
 **Propagation**: a dependent inherits `risk × 0.6` (the decay) of what it depends on, taking the
 **highest** path — so a workload behind an incompatible add-on (90) inherits `90 × 0.6 = 54`. A
 component with risk **≥ 50** is flagged **at risk**. Risk is then aggregated **per namespace**
@@ -155,8 +159,8 @@ Capacity = 30 − (cpuPressure × 15) − (memPressure × 15)
 CPU and memory **share** the 30 points (15 each), so a cluster at 50% on both is healthy and scores
 well — the combined penalty can't exceed 30. `pressure = requests / allocatable` (what pods
 *reserve*, which is what the scheduler uses to place rescheduled pods during a node drain). Pressure
-**> 90%** on either is a hard override → `CRITICAL` (see below), so the gauge below that line never
-bottoms out on its own.
+**> 90%** on either **blocks the upgrade** (`CRITICAL`, see below) — but that block is a **verdict**
+decision, not a score override: the number keeps reflecting the pressure proportionally, as a gauge.
 
 ### Stability (20) — partitioned with caps
 
@@ -215,9 +219,12 @@ flowchart TD
 | **WARNING** | `true` | Cluster unstable (pods-not-ready beyond the **warn** threshold) **or** total score below the profile's `SafeThreshold`. Attention needed, but not a hard stop. |
 | **SAFE** | `true` | None of the above — ready to upgrade. |
 
-**Hard overrides**: a blocking PDB or CPU/memory > 90% also force the total score to **0**, so the
-gauge and the gate agree. A low score alone never blocks — it can only warrant a `WARNING`. Add-on and
-PVC blockers are layered on last by `ApplyGraphDecision`, which sees the full mirror.
+**The score is never overridden**: no blocker forces the total to a fixed value. A PDB that would
+stall the drain, or CPU/memory > 90%, blocks through the **verdict** (`decision.allow = false`), not by
+zeroing the score — so a healthy-looking number can sit beside a blocked verdict, and that's the point
+(see *Verdict vs health*). CPU/memory pressure still lowers the score proportionally via Capacity, and
+a not-ready pod via Health — but a low score alone never blocks; it can only warrant a `WARNING`. Add-on
+and PVC blockers are layered on last by `ApplyGraphDecision`, which sees the full mirror.
 
 ---
 

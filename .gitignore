@@ -54,3 +54,7 @@ report.json
 
 # Logs
 *.log
+
+# Compatibility matrix — fetched from the mirops-compat OCI artifact at build time (CI), embedded via
+# go:embed. Never committed; see CONTRIBUTING.md for building locally.
+internal/compat/matrix.yaml
