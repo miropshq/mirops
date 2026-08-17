@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/collector"
 	"github.com/miropshq/mirops/internal/controller"
+	"github.com/miropshq/mirops/internal/crd"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	discoveryclient "k8s.io/client-go/discovery"
@@ -161,6 +163,13 @@ func main() {
 	}
 
 	cfg := ctrl.GetConfigOrDie()
+
+	// Install the operator's own CRDs (embedded in this image) before the manager starts watching
+	// them. The CRDs always match this binary, so there's no separate chart install or version skew.
+	if err := crd.Install(context.Background(), cfg); err != nil {
+		setupLog.Error(err, "unable to install embedded CRDs")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,

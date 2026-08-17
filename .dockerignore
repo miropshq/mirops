@@ -10,5 +10,7 @@
 !go.mod
 !go.sum
 
-# Re-include go:embed'd data files (the compatibility matrix is embedded at build time)
+# Re-include go:embed'd data files (embedded at build time)
 !internal/compat/matrix.yaml
+# The operator embeds its own CRDs (installed at startup); they must reach the build context.
+!internal/crd/*.yaml

@@ -68,6 +68,16 @@ jobs:
       - name: Generate manifests
         run: make manifests
 
+      # make manifests just generated the CRDs; share them so the image build can embed them
+      # (go:embed). The operator installs its own CRDs at startup, so the chart no longer ships them.
+      - name: Upload CRDs
+        uses: actions/upload-artifact@v4
+        with:
+          name: crds
+          path: config/crd/bases/*.yaml
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Lint Dockerfile (operator)
         uses: hadolint/hadolint-action@v3.1.0
         with:
@@ -87,32 +97,6 @@ jobs:
       - name: Build binary
         run: make build
 
-  # ─── Upload CRDs ───────────────────────────────────────────────────────────────
-  # Uploads CRDs generated from `make manifests` so the mirops-operator Helm chart
-  # always consumes CRDs that match this commit — never the committed copy.
-  upload-crds:
-    name: Upload CRDs (prod)
-    runs-on: ubuntu-latest
-    needs: ci
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Generate manifests
-        run: make manifests
-
-      - name: Upload CRDs
-        uses: actions/upload-artifact@v4
-        with:
-          name: crds-prod
-          path: config/crd/bases/*.yaml
-          if-no-files-found: error
-          retention-days: 90
-
   # ─── semantic-release ─────────────────────────────────────────────────────────
   # Reads conventional commits and automatically:
   #   - Determines the next semver version (patch / minor / major)
@@ -121,7 +105,7 @@ jobs:
   semantic-release:
     name: Semantic Release
     runs-on: ubuntu-latest
-    needs: upload-crds
+    needs: ci
     outputs:
       new_release_published: ${{ steps.release.outputs.new_release_published }}
       new_release_version: ${{ steps.release.outputs.new_release_version }}
@@ -180,6 +164,14 @@ jobs:
         with:
           name: matrix
           path: internal/compat/
+
+      # The image also embeds the CRDs (go:embed) so the operator installs them itself at startup.
+      # The ci job produced them; drop them into the build context next to the embed directive.
+      - name: Download CRDs
+        uses: actions/download-artifact@v4
+        with:
+          name: crds
+          path: internal/crd/
 
       - name: Login to the Container registry
         uses: docker/login-action@v3
