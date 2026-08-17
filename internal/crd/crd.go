@@ -50,7 +50,7 @@ func Install(ctx context.Context, cfg *rest.Config) error {
 	}
 
 	// Apply every CRD (upgradeanalyses, remediationplans, ...) first, then wait for all of them.
-	var names []string
+	names := make([]string, 0, len(files))
 	for _, f := range files {
 		data, err := crdFS.ReadFile(f)
 		if err != nil {
