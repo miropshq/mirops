@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +12,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/miropshq/mirops/internal/analysis"
 )
 
@@ -79,6 +81,10 @@ func (e *S3Exporter) Read() ([]byte, error) {
 		Key:    aws.String(e.Key),
 	})
 	if err != nil {
+		var nske *s3types.NoSuchKey
+		if errors.As(err, &nske) {
+			return nil, fmt.Errorf("report object s3://%s/%s not written yet: %w", e.Bucket, e.Key, ErrNotFound)
+		}
 		return nil, fmt.Errorf("reading report from S3 s3://%s/%s: %w", e.Bucket, e.Key, err)
 	}
 	defer func() { _ = out.Body.Close() }()

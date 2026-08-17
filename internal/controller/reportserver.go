@@ -18,6 +18,7 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
+	"github.com/miropshq/mirops/internal/exporter"
 )
 
 // ReportServer serves report JSON over HTTP. A file (default) destination is served from the local
@@ -75,6 +77,14 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := exp.Read()
 	if err != nil {
+		// The report isn't at the destination yet — a poll that beat the export. This is expected
+		// while an analysis is in flight, so return a plain 404 (the UI keeps polling) and don't log
+		// it as a failure. Real connection/auth errors still surface as 502 + ERROR below.
+		if errors.Is(err, exporter.ErrNotFound) {
+			log.V(1).Info("report not written yet", "report", uaName, "location", exp.Location())
+			http.Error(w, "report not available yet", http.StatusNotFound)
+			return
+		}
 		s.writeReadError(w, log, uaName, exp.Location(), err)
 		return
 	}

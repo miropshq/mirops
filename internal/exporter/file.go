@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,9 @@ func (e *FileExporter) Export(report *analysis.Report) error {
 func (e *FileExporter) Read() ([]byte, error) {
 	data, err := os.ReadFile(e.Path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("report file %s not written yet: %w", e.Path, ErrNotFound)
+		}
 		return nil, fmt.Errorf("reading report file %s: %w", e.Path, err)
 	}
 	return data, nil

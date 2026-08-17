@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/miropshq/mirops/internal/analysis"
 )
 
@@ -74,6 +75,9 @@ func (e *BlobExporter) Read() ([]byte, error) {
 
 	resp, err := client.DownloadStream(context.Background(), e.ContainerName, e.BlobName, nil)
 	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil, fmt.Errorf("report blob %s/%s not written yet: %w", e.ContainerName, e.BlobName, ErrNotFound)
+		}
 		return nil, fmt.Errorf("reading report from blob %s/%s/%s: %w", e.AccountName, e.ContainerName, e.BlobName, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
