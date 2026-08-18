@@ -391,11 +391,17 @@ operator (e.g. IRSA for S3, inside AWS).
 | `file` | Local file in the pod (default; ephemeral `emptyDir`), served over HTTP | `path` |
 | `s3` | Amazon S3 — no local replica | `bucket`, `region`, `key`, `credentialsSecret` |
 | `blob` | Azure Blob Storage — no local replica | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
-| `pvc` | PersistentVolumeClaim (on-prem, no cloud) — no local replica | `path` (mount dir; report written as `<name>.json`) |
+| `pvc` | PersistentVolumeClaim (on-prem, no cloud) — no local replica | `path` (mount dir; report written as `<name>.mirops`) |
 
 `credentialsSecret` is **optional** — leave it empty to use **IRSA** (S3) or **Workload / Managed
 Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
 The `pvc` volume is mounted by the Helm chart (`reportPVC.enabled=true`).
+
+**Report naming.** For `s3`/`blob`, the object is named exactly as you set `key`/`blobName` — you own
+the name and extension. Leave it empty to default to `<analysis-name>.mirops`; for `pvc`, mirops names
+the file `<analysis-name>.mirops`. The content is JSON either way (uploaded as `application/json`), so
+the **`.mirops`** convention just keeps reports distinct from config files sharing the destination
+(filter them with `*.mirops`). The local `file` destination stays `<name>.json` (served over HTTP).
 
 **Failures are surfaced, not hidden.** When the operator can't write to (or read back from) a remote
 destination, it records the outcome on the CR — `status.reportState` (`written` / `failed`),

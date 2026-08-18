@@ -345,6 +345,23 @@ func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
 
 // buildExporter selects and configures the right exporter based on source.type.
 // When credentialsSecret is set, it reads credentials from the referenced Secret.
+// reportExt is the default report extension. It only applies when the destination name is left
+// unset — otherwise the user owns the name and its extension. `.mirops` keeps reports distinct from
+// config files sharing a bucket/container/PVC (filter with `*.mirops`); the content is uploaded as
+// application/json regardless.
+const reportExt = ".mirops"
+
+// reportObjectName resolves a remote report's object/blob name. The user owns the name AND the
+// extension: whatever they set in blobName/key is used verbatim, so they choose `.mirops` (or
+// anything). Only when it's unset does mirops fall back to "<analysis name>.mirops". It's used inside
+// buildExporter, so the reconciler's write and the report server's read-back always agree.
+func reportObjectName(configured, uaName string) string {
+	if configured != "" {
+		return configured
+	}
+	return uaName + reportExt
+}
+
 // buildExporter constructs the Exporter for a CR's configured destination. It is a package
 // function (not a method) so both the reconciler and the reports HTTP server can build the same
 // exporter to write and read back a report.
@@ -369,7 +386,7 @@ func buildExporter(ctx context.Context, c client.Client, operatorNamespace strin
 		return &exporter.S3Exporter{
 			Bucket:          src.Bucket,
 			Region:          src.Region,
-			Key:             src.Key,
+			Key:             reportObjectName(src.Key, ua.Name),
 			AccessKeyID:     string(secretData["AWS_ACCESS_KEY_ID"]),
 			SecretAccessKey: string(secretData["AWS_SECRET_ACCESS_KEY"]),
 		}, nil
@@ -377,19 +394,20 @@ func buildExporter(ctx context.Context, c client.Client, operatorNamespace strin
 		return &exporter.BlobExporter{
 			AccountName:   src.AccountName,
 			ContainerName: src.ContainerName,
-			BlobName:      src.BlobName,
+			BlobName:      reportObjectName(src.BlobName, ua.Name),
 			ClientID:      string(secretData["AZURE_CLIENT_ID"]),
 			ClientSecret:  string(secretData["AZURE_CLIENT_SECRET"]),
 			TenantID:      string(secretData["AZURE_TENANT_ID"]),
 		}, nil
 	case miropsv1.SourceTypePVC:
 		// A PVC destination is a filesystem write to a volume the Helm chart mounts. src.Path is
-		// the mount directory; the report lands as <name>.json so multiple analyses don't collide.
+		// the mount directory; the report lands as <name>.mirops so multiple analyses don't collide
+		// and reports stay distinct from any config files sharing the volume.
 		dir := src.Path
 		if dir == "" {
 			dir = "/mnt/mirops-reports"
 		}
-		return exporter.NewFileExporter(filepath.Join(dir, ua.Name+".json")), nil
+		return exporter.NewFileExporter(filepath.Join(dir, reportObjectName("", ua.Name))), nil
 	default:
 		return exporter.NewFileExporter(src.Path), nil
 	}
