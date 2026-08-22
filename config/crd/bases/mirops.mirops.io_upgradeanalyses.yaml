@@ -66,6 +66,15 @@ spec:
                     default: false
                     description: enabled activates AI scoring (base 70% + AI 30%)
                     type: boolean
+                  maxTokens:
+                    default: 2048
+                    description: |-
+                      maxTokens is the maximum number of tokens the model may generate in its response. Applies to
+                      both Anthropic and OpenAI. Higher allows a longer AI explanation but costs more; defaults to 2048.
+                    format: int32
+                    maximum: 32768
+                    minimum: 1
+                    type: integer
                   model:
                     description: model is the model name to call (e.g. claude-sonnet-4-6)
                     type: string

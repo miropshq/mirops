@@ -67,6 +67,14 @@ type AIConfig struct {
 	// +optional
 	Model string `json:"model,omitempty"`
 
+	// maxTokens is the maximum number of tokens the model may generate in its response. Applies to
+	// both Anthropic and OpenAI. Higher allows a longer AI explanation but costs more; defaults to 2048.
+	// +kubebuilder:default=2048
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=32768
+	// +optional
+	MaxTokens int32 `json:"maxTokens,omitempty"`
+
 	// credentialsSecret is a Secret in the same namespace containing the API key.
 	// Key name: ANTHROPIC_API_KEY or OPENAI_API_KEY
 	// +optional

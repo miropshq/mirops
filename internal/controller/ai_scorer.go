@@ -86,12 +86,19 @@ func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv
 		return cached.score, cached.reasoning, cached.actions, nil
 	}
 
+	// The CRD defaults maxTokens to 2048; fall back defensively for objects created before the field
+	// existed or by clients that bypass admission defaulting.
+	maxTokens := ua.Spec.AI.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 2048
+	}
+
 	var raw string
 	switch ua.Spec.AI.Provider {
 	case miropsv1.AIProviderOpenAI:
-		raw, err = callOpenAI(ctx, apiKey, model, prompt)
+		raw, err = callOpenAI(ctx, apiKey, model, prompt, maxTokens)
 	default:
-		raw, err = callAnthropic(ctx, apiKey, model, prompt)
+		raw, err = callAnthropic(ctx, apiKey, model, prompt, maxTokens)
 	}
 	if err != nil {
 		return 0, "", nil, err
@@ -105,14 +112,14 @@ func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv
 	return score, reasoning, actions, nil
 }
 
-func callAnthropic(ctx context.Context, apiKey, model, prompt string) (string, error) {
+func callAnthropic(ctx context.Context, apiKey, model, prompt string, maxTokens int32) (string, error) {
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
 	client := anthropic.NewClient(anthropicoption.WithAPIKey(apiKey))
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     model,
-		MaxTokens: 2048,
+		MaxTokens: int64(maxTokens),
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
@@ -126,13 +133,14 @@ func callAnthropic(ctx context.Context, apiKey, model, prompt string) (string, e
 	return msg.Content[0].Text, nil
 }
 
-func callOpenAI(ctx context.Context, apiKey, model, prompt string) (string, error) {
+func callOpenAI(ctx context.Context, apiKey, model, prompt string, maxTokens int32) (string, error) {
 	if model == "" {
 		model = "gpt-4o"
 	}
 	client := openai.NewClient(openaioption.WithAPIKey(apiKey))
 	resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: model,
+		Model:               model,
+		MaxCompletionTokens: openai.Int(int64(maxTokens)),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(prompt),
 		},
