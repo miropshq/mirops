@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -50,6 +51,12 @@ type UpgradeAnalysisReconciler struct {
 	// is cluster-scoped, the operator reads its own dependencies (AI secret, compat ConfigMap)
 	// and the report's cloud-credentials secret from here, not from the CR's namespace.
 	OperatorNamespace string
+
+	// aiCache memoizes the last AI result per UpgradeAnalysis (keyed by a prompt hash) so a resync
+	// on an unchanged cluster reuses it instead of paying for an identical model call. In-memory:
+	// a process restart just costs one fresh call per analysis.
+	aiCache   map[string]aiCacheEntry
+	aiCacheMu sync.Mutex
 }
 
 // +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete

@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	openaioption "github.com/openai/openai-go/option"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/analysis"
@@ -35,7 +38,37 @@ type aiActionEntry struct {
 	Params    map[string]string `json:"params,omitempty"`
 }
 
+// aiCacheEntry is the last AI result for one UpgradeAnalysis, keyed by a hash of everything the call
+// depends on (provider + model + prompt). Reused when a later resync produces the identical hash.
+type aiCacheEntry struct {
+	hash      string
+	score     int
+	reasoning string
+	actions   []aiActionEntry
+}
+
+func (r *UpgradeAnalysisReconciler) aiCacheGet(key, hash string) (aiCacheEntry, bool) {
+	r.aiCacheMu.Lock()
+	defer r.aiCacheMu.Unlock()
+	if e, ok := r.aiCache[key]; ok && e.hash == hash {
+		return e, true
+	}
+	return aiCacheEntry{}, false
+}
+
+func (r *UpgradeAnalysisReconciler) aiCachePut(key string, e aiCacheEntry) {
+	r.aiCacheMu.Lock()
+	defer r.aiCacheMu.Unlock()
+	if r.aiCache == nil {
+		r.aiCache = make(map[string]aiCacheEntry)
+	}
+	r.aiCache[key] = e
+}
+
 // scoreWithAI calls the configured AI provider and returns score, reasoning, actions and error.
+// A resync on a steady cluster rebuilds the exact same prompt; rather than pay for an identical
+// answer every interval, the result is memoized per UpgradeAnalysis and reused until the prompt
+// (i.e. the cluster state the model sees) actually changes.
 func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv1.UpgradeAnalysis, report *analysis.Report) (int, string, []aiActionEntry, error) {
 	apiKey, err := r.readAIAPIKey(ctx, ua)
 	if err != nil {
@@ -44,6 +77,14 @@ func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv
 
 	model := ua.Spec.AI.Model
 	prompt := buildAIPrompt(report, ua.Spec.AI.Remediation.Enabled)
+
+	// Cache key covers everything that changes the answer: provider, model, and the prompt itself.
+	sum := sha256.Sum256([]byte(string(ua.Spec.AI.Provider) + "\x00" + model + "\x00" + prompt))
+	hash := hex.EncodeToString(sum[:])
+	if cached, ok := r.aiCacheGet(ua.Name, hash); ok {
+		logf.FromContext(ctx).V(1).Info("reusing cached AI result (cluster state unchanged since last run)")
+		return cached.score, cached.reasoning, cached.actions, nil
+	}
 
 	var raw string
 	switch ua.Spec.AI.Provider {
@@ -55,7 +96,13 @@ func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv
 	if err != nil {
 		return 0, "", nil, err
 	}
-	return parseAIResponse(raw)
+
+	score, reasoning, actions, err := parseAIResponse(raw)
+	if err != nil {
+		return 0, "", nil, err // don't cache a failed parse
+	}
+	r.aiCachePut(ua.Name, aiCacheEntry{hash: hash, score: score, reasoning: reasoning, actions: actions})
+	return score, reasoning, actions, nil
 }
 
 func callAnthropic(ctx context.Context, apiKey, model, prompt string) (string, error) {
@@ -145,17 +192,38 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, "\n")
 	}
 
-	if len(report.Workloads.Nodes) > 0 {
-		fmt.Fprintf(&b, "NODES:\n")
+	// Only send rows that carry a risk signal. A Ready node and a fully-ready Deployment tell the
+	// model nothing it can act on, and on a large cluster the healthy majority would dominate the
+	// prompt — so we drop them. (StatefulSets/Jobs already arrive problem-only from the operator.)
+	notReadyNodes := 0
+	for _, n := range report.Workloads.Nodes {
+		if n.Status != "Ready" {
+			notReadyNodes++
+		}
+	}
+	if notReadyNodes > 0 {
+		fmt.Fprintf(&b, "NODES (not Ready):\n")
 		for _, n := range report.Workloads.Nodes {
+			if n.Status == "Ready" {
+				continue
+			}
 			fmt.Fprintf(&b, "- %s: %s\n", n.Name, n.Status)
 		}
 		fmt.Fprintf(&b, "\n")
 	}
 
-	if len(report.Workloads.Deployments) > 0 {
-		fmt.Fprintf(&b, "DEPLOYMENTS:\n")
+	notReadyDeps := 0
+	for _, d := range report.Workloads.Deployments {
+		if d.ReadyReplicas < d.DesiredReplicas {
+			notReadyDeps++
+		}
+	}
+	if notReadyDeps > 0 {
+		fmt.Fprintf(&b, "DEPLOYMENTS (not ready):\n")
 		for _, d := range report.Workloads.Deployments {
+			if d.ReadyReplicas >= d.DesiredReplicas {
+				continue
+			}
 			fmt.Fprintf(&b, "- %s/%s: %d/%d ready\n", d.Namespace, d.Name, d.ReadyReplicas, d.DesiredReplicas)
 		}
 		fmt.Fprintf(&b, "\n")
@@ -203,12 +271,23 @@ func buildAIPrompt(report *analysis.Report, withRemediation bool) string {
 		fmt.Fprintf(&b, "\n")
 	}
 
-	if report.Risk != nil && len(report.Risk.ByNamespace) > 0 {
-		fmt.Fprintf(&b, "RISK BY NAMESPACE (0-100, higher = riskier):\n")
+	if report.Risk != nil {
+		riskyNamespaces := 0
 		for _, ns := range report.Risk.ByNamespace {
-			fmt.Fprintf(&b, "- %s: risk %d (%d/%d components at risk)\n", ns.Namespace, ns.Risk, ns.AtRisk, ns.Components)
+			if ns.Risk > 0 {
+				riskyNamespaces++
+			}
 		}
-		fmt.Fprintf(&b, "\n")
+		if riskyNamespaces > 0 {
+			fmt.Fprintf(&b, "RISK BY NAMESPACE (0-100, higher = riskier):\n")
+			for _, ns := range report.Risk.ByNamespace {
+				if ns.Risk == 0 {
+					continue
+				}
+				fmt.Fprintf(&b, "- %s: risk %d (%d/%d components at risk)\n", ns.Namespace, ns.Risk, ns.AtRisk, ns.Components)
+			}
+			fmt.Fprintf(&b, "\n")
+		}
 	}
 
 	writeGraphContext(&b, report.Graph)
