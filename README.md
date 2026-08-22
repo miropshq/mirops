@@ -294,6 +294,62 @@ kubectl create secret generic mirops-ai -n mirops \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+The Secret key must be `ANTHROPIC_API_KEY` (anthropic) or `OPENAI_API_KEY` (openai). Cap the model's
+response length with `spec.ai.maxTokens` (default `2048`, applies to both providers).
+
+---
+
+## Remediation (optional)
+
+When `spec.ai.remediation.enabled` is true, the AI also proposes fixes for the detected issues and the
+operator creates a cluster-scoped **RemediationPlan** holding them. Nothing runs until you approve it —
+mirops proposes, you decide, the operator executes.
+
+```
+UpgradeAnalysis  (ai.remediation.enabled)
+   │  AI proposes actions
+   ▼
+RemediationPlan  phase: pending-approval   (spec.approved: false)
+   │  you set spec.approved: true
+   ▼
+   running → executes each action → completed | failed   (+ per-action results)
+```
+
+### Actions
+
+Each proposed action targets one resource and carries a `risk` rating:
+
+| Action             | What it does                                    | Typical risk |
+|--------------------|-------------------------------------------------|--------------|
+| `restart-pod`      | deletes the pod so its controller recreates it  | low          |
+| `delete-pod`       | force-deletes a stuck pod (grace period 0)      | low–medium   |
+| `scale-deployment` | sets a Deployment's replica count               | medium       |
+| `cordon-node`      | marks a node unschedulable (drain prep)         | high         |
+
+### Risk levels — `spec.ai.remediation.maxRiskLevel`
+
+A ceiling on which proposed actions make it into the plan. Actions **above** the ceiling are dropped.
+
+| Level             | Actions included    |
+|-------------------|---------------------|
+| `low` *(default)* | low only            |
+| `medium`          | low + medium        |
+| `high`            | low + medium + high |
+
+So with `maxRiskLevel: low`, an AI-proposed `cordon-node` (high) is excluded and only low-risk actions
+remain in the plan.
+
+### Two independent gates
+
+`maxRiskLevel` filters **what is proposed**; approval controls **whether it runs**:
+
+- `spec.approved: true` — required before any action executes (default `false`).
+- `spec.ai.remediation.autoApprove: true` — executes immediately, skipping approval. Off by default; use with care.
+- `spec.actions[].skip: true` — approve the plan but exclude specific actions from execution.
+
+Each executed action records a result (`success` / `failed` / `skipped`) on `status.results`. Today the
+actions are pod- and node-level only — remediation does not upgrade add-ons, edit PDBs, or restore PVCs.
+
 ---
 
 ## Add-on compatibility
