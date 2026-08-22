@@ -467,6 +467,175 @@ report from S3/Blob/PVC — there is no cleanup finalizer.
 
 ---
 
+## Custom resources reference
+
+Two cluster-scoped CRDs. You author `UpgradeAnalysis`; the operator creates `RemediationPlan` from it.
+Everything below works with plain `kubectl` — Headlamp is optional.
+
+### UpgradeAnalysis (input)
+
+**The simplest form** — `targetVersion` is the only required field; everything else takes its default
+(scoring `production`, scope `all`, source `file`, no AI). This is all you need to get a verdict:
+
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: UpgradeAnalysis
+metadata:
+  name: to-1-34          # cluster-scoped — no namespace
+spec:
+  targetVersion: "1.34"  # the only required field
+```
+
+```sh
+kubectl apply -f analysis.yaml
+kubectl describe upgradeanalysis to-1-34   # decision, score, reason, blockers
+```
+
+**Every field**, fully annotated — override only what you need:
+
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: UpgradeAnalysis
+metadata:
+  name: to-1-34                     # cluster-scoped — no namespace
+spec:
+  targetVersion: "1.34"             # REQUIRED — the Kubernetes version to reach
+  scoringProfile: production        # production (strict, default) | non-production (lenient)
+
+  scope:
+    mode: all                       # all (default) | application (skip system namespaces)
+    excludeNamespaces: [monitoring] # extra namespaces to skip
+
+  ai:                               # optional — blends AI into the score (base 70% + AI 30%)
+    enabled: true
+    provider: anthropic             # anthropic | openai
+    model: claude-sonnet-4-6        # optional; provider default otherwise
+    maxTokens: 2048                 # response ceiling, both providers (1–32768, default 2048)
+    credentialsSecret: mirops-ai    # Secret in the operator namespace (ANTHROPIC_API_KEY / OPENAI_API_KEY)
+    remediation:                    # optional — creates a RemediationPlan with AI-proposed fixes
+      enabled: true
+      maxRiskLevel: low             # low (default) | medium | high — ceiling on proposed actions
+      autoApprove: false            # true = execute without manual approval (use with care)
+
+  resync:
+    interval: "30m"                 # re-run automatically on this interval; empty = run once
+
+  source:                           # where the report is written (see "Report destinations")
+    type: file                      # file (default) | s3 | blob | pvc
+    path: ""                        # file: report basename; pvc: directory on the mounted volume
+    # s3:   bucket, region, key, credentialsSecret
+    # blob: accountName, containerName, blobName, credentialsSecret
+```
+
+| Field | Type / values | Default | Notes |
+|-------|---------------|---------|-------|
+| `targetVersion` | string | — | **Required.** Target Kubernetes version, e.g. `"1.34"`. |
+| `scoringProfile` | `production` \| `non-production` | `production` | Strictness of the SAFE bar and block thresholds. |
+| `scope.mode` | `all` \| `application` | `all` | `application` excludes system namespaces. |
+| `scope.excludeNamespaces` | `[]string` | — | Extra namespaces to skip. |
+| `ai.enabled` | bool | `false` | Blend AI into the gauge; never affects the gate. |
+| `ai.provider` | `anthropic` \| `openai` | `anthropic` | AI backend. |
+| `ai.model` | string | provider default | e.g. `claude-sonnet-4-6`, `gpt-4o`. |
+| `ai.maxTokens` | int (1–32768) | `2048` | Max response tokens (both providers). |
+| `ai.credentialsSecret` | string | — | Secret with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. |
+| `ai.remediation.enabled` | bool | `false` | Create a RemediationPlan with proposed fixes. |
+| `ai.remediation.maxRiskLevel` | `low` \| `medium` \| `high` | `low` | Ceiling on proposed actions (see Remediation). |
+| `ai.remediation.autoApprove` | bool | `false` | Execute without manual approval. |
+| `resync.interval` | duration | — (once) | e.g. `"15m"`, `"1h"`. Empty = run once. |
+| `source.type` | `file` \| `s3` \| `blob` \| `pvc` | `file` | Report destination (see table above). |
+
+The operator writes the outcome to **`status`** (read-only): `decision` (`SAFE`/`WARNING`/`CRITICAL`),
+`totalScore`, `reason`, `conditions`, and — when AI ran — `aiScore` / `aiReasoning` / `aiModel`, plus
+report bookkeeping (`reportState`, `reportLocation`, `reportError`). Inspect with `kubectl describe`.
+
+#### Report destination variants
+
+The `source` block chooses where the report is written — drop any of these into a spec in place of the
+`file` default. Remote destinations keep no local replica (see [Report destinations](#report-destinations)).
+
+```yaml
+  # Amazon S3 — omit credentialsSecret to use IRSA
+  source:
+    type: s3
+    bucket: my-reports
+    region: us-east-1
+    key: clusters/prod.mirops          # you own the name; empty → <name>.mirops
+    credentialsSecret: aws-creds        # optional (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
+```
+
+```yaml
+  # Azure Blob — omit credentialsSecret to use Workload / Managed Identity
+  source:
+    type: blob
+    accountName: mystorage
+    containerName: reports
+    blobName: prod.mirops               # you own the name; empty → <name>.mirops
+    credentialsSecret: azure-creds      # optional (AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID)
+```
+
+```yaml
+  # PersistentVolumeClaim — on-prem, no cloud object storage (chart: reportPVC.enabled=true)
+  source:
+    type: pvc
+    path: /reports                      # directory on the mounted volume (report → <name>.mirops)
+```
+
+### RemediationPlan (created by the operator)
+
+Emitted only when `ai.remediation.enabled` is true. The operator fills `spec.actions`; **you** set
+`spec.approved: true` to execute. Nothing runs until you do (unless `autoApprove` was set).
+
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: RemediationPlan
+metadata:
+  name: to-1-34-remediation         # created by the operator; cluster-scoped
+spec:
+  upgradeAnalysisRef: to-1-34       # the analysis that produced this plan
+  approved: false                   # ← set true to execute
+  actions:
+    - id: action-1
+      type: restart-pod             # restart-pod | delete-pod | scale-deployment | cordon-node
+      namespace: default
+      name: crash-test-6cfc7c5c44-lnnvz
+      reason: "CrashLoopBackOff; a restart may clear a transient failure"
+      risk: low                     # low | medium | high
+      skip: false                   # true = keep in the plan but don't execute this one
+    - id: action-2
+      type: scale-deployment
+      namespace: default
+      name: heavy-app
+      reason: "Reduce memory pressure before draining nodes"
+      risk: medium
+      params:
+        replicas: "2"               # type-specific parameters
+```
+
+Approve (or approve everything except one action):
+
+```sh
+# approve the whole plan
+kubectl patch remediationplan to-1-34-remediation --type=merge -p '{"spec":{"approved":true}}'
+
+# ...or skip action-2, then approve
+kubectl patch remediationplan to-1-34-remediation --type=json \
+  -p '[{"op":"replace","path":"/spec/actions/1/skip","value":true}]'
+```
+
+| Field | Type / values | Notes |
+|-------|---------------|-------|
+| `spec.upgradeAnalysisRef` | string | Name of the source `UpgradeAnalysis`. |
+| `spec.approved` | bool | Gate: `true` executes the plan. Default `false`. |
+| `spec.actions[].type` | `restart-pod` \| `delete-pod` \| `scale-deployment` \| `cordon-node` | The operation. |
+| `spec.actions[].risk` | `low` \| `medium` \| `high` | Filtered by `maxRiskLevel` before the plan is built. |
+| `spec.actions[].skip` | bool | Exclude this action even when the plan is approved. |
+| `spec.actions[].params` | map | Type-specific, e.g. `replicas` for `scale-deployment`. |
+
+Each executed action records `status.results[]` (`success` / `failed` / `skipped`); `status.phase`
+moves `pending-approval → running → completed | failed`.
+
+---
+
 ## Compatible versions
 
 | Component | Version |
