@@ -10,7 +10,7 @@
 implementation of the mirror-operations concept. It builds a logical mirror of a Kubernetes cluster
 (a component graph + dependency risk + add-on compatibility) and uses it to evaluate **how ready the
 cluster is for a version upgrade**, optionally letting an AI reason over the mirror. The output is a
-`report.json` and a decision: `SAFE`, `WARNING`, or `CRITICAL`.
+JSON report (`<name>.mirops`) and a decision: `SAFE`, `WARNING`, or `CRITICAL`.
 
 ---
 
@@ -59,7 +59,7 @@ flowchart TD
     E --> F
     F --> G["AI scoring (optional, gauge only)"]
     G --> H["analysis.ApplyGraphDecision<br/>(final decision authority)"]
-    H --> I["report.json<br/>HTTP :8084 + optional s3 / blob / pvc"]
+    H --> I["report .mirops<br/>HTTP :8084 + optional s3 / blob / pvc"]
     I --> J["mirops-cli (CI gate)"]
     I --> K["Headlamp plugin (graph UI)"]
     H --> L["UpgradeAnalysis .status<br/>(decision, score, reason, reportState)"]
@@ -79,11 +79,11 @@ flowchart TD
 
 ## The mirops ecosystem
 
-The operator produces `report.json`; these open-source tools consume it. Each lives in its own repo.
+The operator produces the report (`<name>.mirops`); these open-source tools consume it. Each lives in its own repo.
 
 | Tool | Repository | Role |
 |------|------------|------|
-| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves `report.json`. |
+| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the report. |
 | **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan --source … --enforce` — renders the report and **gates a CI/CD pipeline**. |
 | **Headlamp plugin** | [github.com/miropshq/mirops-ui](https://github.com/miropshq/mirops-ui) | Visualizes the dependency graph, decision, add-on compatibility, and per-namespace risk. |
 | **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) | Deploys the operator + RBAC + reports service. |
@@ -414,7 +414,7 @@ spec:
     provider: anthropic
     credentialsSecret: mirops-ai    # Secret in the operator namespace
   source:
-    type: file                      # file | s3 | blob | pvc (pvc = on-prem persistent storage)
+    type: file                      # file | s3 | blob | pvc (pvc = in-cluster persistent storage)
 ```
 
 ```sh
@@ -428,7 +428,7 @@ Re-run an analysis on demand by bumping the spec or adding the `mirops.io/refres
 Gate a CI/CD pipeline with the [CLI](https://github.com/miropshq/mirops-cli):
 
 ```sh
-mirops scan --source http://<reports-service>:8084/reports/to-1-34.json --enforce
+mirops scan --source http://<reports-service>:8084/reports/to-1-34.mirops --enforce
 # exits non-zero when decision.allow == false (CRITICAL)
 ```
 
@@ -447,7 +447,7 @@ operator (e.g. IRSA for S3, inside AWS).
 | `file` | Local file in the pod (default; ephemeral `emptyDir`), served over HTTP | `path` |
 | `s3` | Amazon S3 — no local replica | `bucket`, `region`, `key`, `credentialsSecret` |
 | `blob` | Azure Blob Storage — no local replica | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
-| `pvc` | PersistentVolumeClaim (on-prem, no cloud) — no local replica | `path` (mount dir; report written as `<name>.mirops`) |
+| `pvc` | PersistentVolumeClaim — in-cluster **persistent** storage (like `file`, but survives pod restarts; no cloud) | `path` (mount dir; report written as `<name>.mirops`) |
 
 `credentialsSecret` is **optional** — leave it empty to use **IRSA** (S3) or **Workload / Managed
 Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
@@ -574,7 +574,7 @@ The `source` block chooses where the report is written — drop any of these int
 ```
 
 ```yaml
-  # PersistentVolumeClaim — on-prem, no cloud object storage (chart: reportPVC.enabled=true)
+  # PersistentVolumeClaim — in-cluster persistent storage, no cloud (chart: reportPVC.enabled=true)
   source:
     type: pvc
     path: /reports                      # directory on the mounted volume (report → <name>.mirops)
