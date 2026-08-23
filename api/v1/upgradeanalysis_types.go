@@ -103,7 +103,7 @@ const (
 	SourceTypeBlob SourceType = "blob"
 	// SourceTypePVC writes the report to a PersistentVolumeClaim mounted into the operator,
 	// for on-premises clusters without cloud object storage. The PVC is mounted via the Helm
-	// chart; source.path is the directory on that volume (report is written as <name>.json).
+	// chart; source.path is the directory on that volume (report is written as <name>.mirops).
 	SourceTypePVC SourceType = "pvc"
 )
 
@@ -138,8 +138,8 @@ type SourceConfig struct {
 	Type SourceType `json:"type"`
 
 	// path is the report file name when type is "file" (the directory is fixed at the operator's
-	// reports dir; only the basename is used). Defaults to "<name>.json". When type is "pvc" it is
-	// the directory on the mounted PersistentVolumeClaim (the report is written as <name>.json there).
+	// reports dir; only the basename is used). Defaults to "<name>.mirops". When type is "pvc" it is
+	// the directory on the mounted PersistentVolumeClaim (the report is written as <name>.mirops there).
 	// +optional
 	Path string `json:"path,omitempty"`
 

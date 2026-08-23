@@ -44,7 +44,7 @@ type ReportServer struct {
 }
 
 // ServeHTTP is mounted behind http.StripPrefix("/reports/", …), so r.URL.Path is the bare report
-// file name (e.g. "mirops-test.json").
+// file name (e.g. "mirops-test.mirops").
 func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(r.URL.Path)
 	if name == "." || name == "/" || name == "" {
@@ -59,10 +59,11 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remote destination: look up the (cluster-scoped) UpgradeAnalysis and read the report back
-	// from s3/blob/pvc. The report file name is "<ua.Name>.json" for remote destinations.
+	// from s3/blob/pvc. The report file name is "<ua.Name>.mirops"; tolerate a legacy ".json"
+	// suffix so a client that hasn't been updated still resolves to the right analysis.
 	ctx := r.Context()
 	log := logf.FromContext(ctx)
-	uaName := strings.TrimSuffix(name, ".json")
+	uaName := strings.TrimSuffix(strings.TrimSuffix(name, ".mirops"), ".json")
 
 	ua := &miropsv1.UpgradeAnalysis{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: uaName}, ua); err != nil {

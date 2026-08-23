@@ -18,7 +18,7 @@ type FileExporter struct {
 
 func NewFileExporter(path string) *FileExporter {
 	if path == "" {
-		path = "/tmp/mirops-report.json"
+		path = "/tmp/mirops-report.mirops"
 	}
 	return &FileExporter{Path: path}
 }

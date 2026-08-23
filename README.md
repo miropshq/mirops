@@ -453,11 +453,11 @@ operator (e.g. IRSA for S3, inside AWS).
 Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
 The `pvc` volume is mounted by the Helm chart (`reportPVC.enabled=true`).
 
-**Report naming.** For `s3`/`blob`, the object is named exactly as you set `key`/`blobName` — you own
-the name and extension. Leave it empty to default to `<analysis-name>.mirops`; for `pvc`, mirops names
-the file `<analysis-name>.mirops`. The content is JSON either way (uploaded as `application/json`), so
-the **`.mirops`** convention just keeps reports distinct from config files sharing the destination
-(filter them with `*.mirops`). The local `file` destination stays `<name>.json` (served over HTTP).
+**Report naming.** Every destination uses the **`.mirops`** extension (the content is JSON, uploaded as
+`application/json`). For `s3`/`blob`, the object is named exactly as you set `key`/`blobName` — you own
+the name; leave it empty to default to `<analysis-name>.mirops`. For `pvc` and the local `file`
+destination (served over HTTP), the report is `<analysis-name>.mirops`. The `.mirops` convention keeps
+reports distinct from config files sharing the destination (filter them with `*.mirops`).
 
 **Failures are surfaced, not hidden.** When the operator can't write to (or read back from) a remote
 destination, it records the outcome on the CR — `status.reportState` (`written` / `failed`),

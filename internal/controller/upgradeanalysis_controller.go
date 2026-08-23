@@ -347,7 +347,8 @@ func (r *UpgradeAnalysisReconciler) loadCompatMatrix(ctx context.Context, namesp
 }
 
 // reportFileName returns the file name for the served report. For source.type: file the user may
-// set source.path (basename only — the directory is fixed); other types default to "<name>.json".
+// set source.path (basename only — the directory is fixed); otherwise it defaults to "<name>.mirops",
+// matching the extension used for remote destinations.
 // reportState values recorded on UpgradeAnalysis.status.reportState.
 const (
 	reportStateWritten = "written"
@@ -360,7 +361,7 @@ func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
 			return base
 		}
 	}
-	return ua.Name + ".json"
+	return ua.Name + ".mirops"
 }
 
 // buildExporter selects and configures the right exporter based on source.type.

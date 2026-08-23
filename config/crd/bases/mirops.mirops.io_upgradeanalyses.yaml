@@ -201,8 +201,8 @@ spec:
                   path:
                     description: |-
                       path is the report file name when type is "file" (the directory is fixed at the operator's
-                      reports dir; only the basename is used). Defaults to "<name>.json". When type is "pvc" it is
-                      the directory on the mounted PersistentVolumeClaim (the report is written as <name>.json there).
+                      reports dir; only the basename is used). Defaults to "<name>.mirops". When type is "pvc" it is
+                      the directory on the mounted PersistentVolumeClaim (the report is written as <name>.mirops there).
                     type: string
                   region:
                     description: region is the AWS region when type is "s3"
