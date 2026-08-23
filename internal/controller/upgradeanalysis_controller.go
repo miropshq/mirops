@@ -32,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/analysis"
@@ -85,7 +86,11 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	ua := &miropsv1.UpgradeAnalysis{}
 	if err := r.Client.Get(ctx, req.NamespacedName, ua); err != nil {
-		log.Error(err, "unable to fetch UpgradeAnalysis")
+		// NotFound is normal — the CR was deleted; nothing to reconcile. Log only real errors so a
+		// routine delete doesn't surface as an ERROR with a stack trace.
+		if client.IgnoreNotFound(err) != nil {
+			log.Error(err, "unable to fetch UpgradeAnalysis")
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -311,6 +316,14 @@ func versionIsHigher(target, current string) bool {
 func (r *UpgradeAnalysisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&miropsv1.UpgradeAnalysis{}).
+		// Reconcile on spec changes (generation) and on the mirops.io/refresh annotation, but NOT on
+		// our own Status().Update — otherwise every status write retriggers a full analysis (and an
+		// AI call), looping continuously whenever no resync interval is set to bound it. Resync still
+		// works: it's driven by RequeueAfter, not a watch event, so the predicate doesn't affect it.
+		WithEventFilter(predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		)).
 		Complete(r)
 }
 
