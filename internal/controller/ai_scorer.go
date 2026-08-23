@@ -78,19 +78,22 @@ func (r *UpgradeAnalysisReconciler) scoreWithAI(ctx context.Context, ua *miropsv
 	model := ua.Spec.AI.Model
 	prompt := buildAIPrompt(report, ua.Spec.AI.Remediation.Enabled)
 
-	// Cache key covers everything that changes the answer: provider, model, and the prompt itself.
-	sum := sha256.Sum256([]byte(string(ua.Spec.AI.Provider) + "\x00" + model + "\x00" + prompt))
-	hash := hex.EncodeToString(sum[:])
-	if cached, ok := r.aiCacheGet(ua.Name, hash); ok {
-		logf.FromContext(ctx).V(1).Info("reusing cached AI result (cluster state unchanged since last run)")
-		return cached.score, cached.reasoning, cached.actions, nil
-	}
-
 	// The CRD defaults maxTokens to 2048; fall back defensively for objects created before the field
 	// existed or by clients that bypass admission defaulting.
 	maxTokens := ua.Spec.AI.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 2048
+	}
+
+	// Cache key covers everything that changes the answer: provider, model, maxTokens (a larger
+	// ceiling can yield a longer, differently-parsed response) and the prompt itself. Including
+	// maxTokens means raising it invalidates a prior (possibly truncated) cached result.
+	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s", ua.Spec.AI.Provider, model, maxTokens, prompt)
+	sum := sha256.Sum256([]byte(key))
+	hash := hex.EncodeToString(sum[:])
+	if cached, ok := r.aiCacheGet(ua.Name, hash); ok {
+		logf.FromContext(ctx).V(1).Info("reusing cached AI result (cluster state unchanged since last run)")
+		return cached.score, cached.reasoning, cached.actions, nil
 	}
 
 	var raw string
