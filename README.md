@@ -365,6 +365,19 @@ For an incompatible add-on it computes the version you'd need to upgrade *to* (i
 surfaces it in `decision.blockers` (`incompatible add-on: istio 1.20 (upgrade to 1.22)`). To extend
 or correct the matrix, edit `matrix.yaml` (a PR) or ship a ConfigMap override.
 
+Each operator release **embeds** a specific published matrix snapshot:
+
+| Operator version | Embedded matrix |
+|------------------|-----------------|
+| `0.1.0` | `v2026.08.29` |
+
+**Updating the matrix without a new operator image.** The embedded snapshot is deterministic and
+offline-safe, but you can decouple the matrix from the operator build: the Helm chart's
+`compatMatrix.enabled=true` pulls a chosen version — `latest` or a pinned date tag `vYYYY.MM.DD` —
+from [`mirops-compat`](https://github.com/miropshq/mirops-compat) (OCI) into the
+`mirops-compatibility-matrix` ConfigMap the operator reads. Pin a date in production so the verdict
+stays reproducible; leave it disabled for air-gapped clusters.
+
 ---
 
 ## Installation
