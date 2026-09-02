@@ -79,6 +79,13 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		if excluded[pod.Namespace] {
 			continue
 		}
+		// A Succeeded pod has completed its run (e.g. a finished Job). It holds no resources and
+		// isn't a workload that must stay Ready, so it must not count as not-ready or drag Health/
+		// capacity down. Skip it entirely. Failed pods still flow through and count as not-ready,
+		// like any other broken pod.
+		if pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
 		snapshot.TotalPods++
 		restarts := 0
 		for _, cs := range pod.Status.ContainerStatuses {
