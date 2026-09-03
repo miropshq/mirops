@@ -76,7 +76,7 @@ jobs:
           name: crds
           path: config/crd/bases/*.yaml
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
 
       - name: Lint Dockerfile (operator)
         uses: hadolint/hadolint-action@v3.1.0
