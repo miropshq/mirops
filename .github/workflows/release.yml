@@ -198,7 +198,7 @@ jobs:
   push:
     name: Push release image (merge manifest) - ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, semantic-release]
     strategy:
       matrix:
         image: [operator, remediation]
