@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/miropshq/mirops/internal/analysis"
 )
 
@@ -25,6 +28,20 @@ type S3Exporter struct {
 	SecretAccessKey string
 }
 
+// loadConfig resolves AWS credentials: static keys when provided, otherwise the default chain
+// (IRSA / instance profile / env vars).
+func (e *S3Exporter) loadConfig(ctx context.Context) (aws.Config, error) {
+	if e.AccessKeyID != "" && e.SecretAccessKey != "" {
+		return awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithRegion(e.Region),
+			awsconfig.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(e.AccessKeyID, e.SecretAccessKey, ""),
+			),
+		)
+	}
+	return awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(e.Region))
+}
+
 func (e *S3Exporter) Export(report *analysis.Report) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -32,19 +49,7 @@ func (e *S3Exporter) Export(report *analysis.Report) error {
 	}
 
 	ctx := context.Background()
-
-	var cfg aws.Config
-	if e.AccessKeyID != "" && e.SecretAccessKey != "" {
-		cfg, err = awsconfig.LoadDefaultConfig(ctx,
-			awsconfig.WithRegion(e.Region),
-			awsconfig.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider(e.AccessKeyID, e.SecretAccessKey, ""),
-			),
-		)
-	} else {
-		// IRSA / instance profile / env vars
-		cfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(e.Region))
-	}
+	cfg, err := e.loadConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("loading AWS config: %w", err)
 	}
@@ -61,6 +66,29 @@ func (e *S3Exporter) Export(report *analysis.Report) error {
 	}
 
 	return nil
+}
+
+func (e *S3Exporter) Read() ([]byte, error) {
+	ctx := context.Background()
+	cfg, err := e.loadConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading AWS config: %w", err)
+	}
+
+	client := s3.NewFromConfig(cfg)
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(e.Bucket),
+		Key:    aws.String(e.Key),
+	})
+	if err != nil {
+		var nske *s3types.NoSuchKey
+		if errors.As(err, &nske) {
+			return nil, fmt.Errorf("report object s3://%s/%s not written yet: %w", e.Bucket, e.Key, ErrNotFound)
+		}
+		return nil, fmt.Errorf("reading report from S3 s3://%s/%s: %w", e.Bucket, e.Key, err)
+	}
+	defer func() { _ = out.Body.Close() }()
+	return io.ReadAll(out.Body)
 }
 
 func (e *S3Exporter) Location() string {

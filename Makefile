@@ -44,6 +44,9 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	# Copy the generated CRDs next to the embed directive so the operator bakes them into its binary
+	# (go:embed can't reach ../config). These copies are git-ignored, like internal/compat/matrix.yaml.
+	cp config/crd/bases/*.yaml internal/crd/
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

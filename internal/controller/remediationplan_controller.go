@@ -13,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 )
@@ -170,6 +171,10 @@ func (r *RemediationPlanReconciler) cordonNode(ctx context.Context, name string)
 func (r *RemediationPlanReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&miropsv1.RemediationPlan{}).
+		// Only reconcile on spec changes (approval/skip bump generation) — not on our own status
+		// writes (phase transitions). Phase guards already stop re-execution, so this just trims the
+		// redundant self-triggered reconciles.
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Complete(r)
 }
 
@@ -207,9 +212,8 @@ func (r *UpgradeAnalysisReconciler) createRemediationPlan(ctx context.Context, u
 
 	plan := &miropsv1.RemediationPlan{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ua.Name + "-remediation",
-			Namespace: ua.Namespace,
-			Labels:    map[string]string{"mirops.io/analysis": ua.Name},
+			Name:   ua.Name + "-remediation",
+			Labels: map[string]string{"mirops.io/analysis": ua.Name},
 		},
 		Spec: miropsv1.RemediationPlanSpec{
 			UpgradeAnalysisRef: ua.Name,

@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ type FileExporter struct {
 
 func NewFileExporter(path string) *FileExporter {
 	if path == "" {
-		path = "/tmp/mirops-report.json"
+		path = "/tmp/mirops-report.mirops"
 	}
 	return &FileExporter{Path: path}
 }
@@ -37,6 +38,17 @@ func (e *FileExporter) Export(report *analysis.Report) error {
 	}
 
 	return nil
+}
+
+func (e *FileExporter) Read() ([]byte, error) {
+	data, err := os.ReadFile(e.Path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("report file %s not written yet: %w", e.Path, ErrNotFound)
+		}
+		return nil, fmt.Errorf("reading report file %s: %w", e.Path, err)
+	}
+	return data, nil
 }
 
 func (e *FileExporter) Location() string {

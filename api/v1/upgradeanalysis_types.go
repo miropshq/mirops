@@ -67,6 +67,14 @@ type AIConfig struct {
 	// +optional
 	Model string `json:"model,omitempty"`
 
+	// maxTokens is the maximum number of tokens the model may generate in its response. Applies to
+	// both Anthropic and OpenAI. Higher allows a longer AI explanation but costs more; defaults to 2048.
+	// +kubebuilder:default=2048
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=32768
+	// +optional
+	MaxTokens int32 `json:"maxTokens,omitempty"`
+
 	// credentialsSecret is a Secret in the same namespace containing the API key.
 	// Key name: ANTHROPIC_API_KEY or OPENAI_API_KEY
 	// +optional
@@ -86,13 +94,17 @@ type ResyncConfig struct {
 }
 
 // SourceType defines where the analysis report will be written
-// +kubebuilder:validation:Enum=file;s3;blob
+// +kubebuilder:validation:Enum=file;s3;blob;pvc
 type SourceType string
 
 const (
 	SourceTypeFile SourceType = "file"
 	SourceTypeS3   SourceType = "s3"
 	SourceTypeBlob SourceType = "blob"
+	// SourceTypePVC writes the report to a PersistentVolumeClaim mounted into the operator,
+	// for on-premises clusters without cloud object storage. The PVC is mounted via the Helm
+	// chart; source.path is the directory on that volume (report is written as <name>.mirops).
+	SourceTypePVC SourceType = "pvc"
 )
 
 // ScopeMode defines which namespaces are included in the analysis
@@ -121,11 +133,13 @@ type ScopeConfig struct {
 
 // SourceConfig defines the output destination for the analysis report
 type SourceConfig struct {
-	// type is the storage backend for the report: file, s3, or blob
+	// type is the storage backend for the report: file, s3, blob, or pvc
 	// +kubebuilder:default=file
 	Type SourceType `json:"type"`
 
-	// path is the file path when type is "file"
+	// path is the report file name when type is "file" (the directory is fixed at the operator's
+	// reports dir; only the basename is used). Defaults to "<name>.mirops". When type is "pvc" it is
+	// the directory on the mounted PersistentVolumeClaim (the report is written as <name>.mirops there).
 	// +optional
 	Path string `json:"path,omitempty"`
 
@@ -167,6 +181,13 @@ type UpgradeAnalysisSpec struct {
 	// +required
 	TargetVersion string `json:"targetVersion"`
 
+	// scoringProfile selects how strict the upgrade-readiness scoring is.
+	// "production" (default) is strict; "non-production" is lenient.
+	// +kubebuilder:validation:Enum=production;non-production
+	// +kubebuilder:default=production
+	// +optional
+	ScoringProfile string `json:"scoringProfile,omitempty"`
+
 	// scope controls which namespaces are included in the analysis.
 	// Defaults to "all" (system + application namespaces).
 	// +optional
@@ -195,7 +216,7 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// decision is the result of the analysis: SAFE, WARNING, or BLOCK
+	// decision is the result of the analysis: SAFE, WARNING, or CRITICAL
 	// +optional
 	Decision string `json:"decision,omitempty"`
 
@@ -211,9 +232,34 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	LastAnalysisTime *metav1.Time `json:"lastAnalysisTime,omitempty"`
 
-	// reportPath is where the JSON report was written
+	// lastRefresh is the value of the mirops.io/refresh annotation honored by the last analysis.
+	// Bumping that annotation forces an immediate re-analysis even within the resync interval.
+	// +optional
+	LastRefresh string `json:"lastRefresh,omitempty"`
+
+	// observedGeneration is the spec generation the last analysis ran against. A spec change
+	// re-runs the analysis immediately, even within the resync interval.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// reportPath is where the JSON report was written (local file destination only)
 	// +optional
 	ReportPath string `json:"reportPath,omitempty"`
+
+	// reportState is the outcome of persisting the report: "written" or "failed".
+	// +optional
+	// +kubebuilder:validation:Enum=written;failed
+	ReportState string `json:"reportState,omitempty"`
+
+	// reportError is the error message when the report could not be written to (or read back from)
+	// its destination — e.g. an S3/Blob/PVC connection failure. Empty on success. Surfaced to the
+	// UI so a remote-storage failure isn't hidden in the pod logs.
+	// +optional
+	ReportError string `json:"reportError,omitempty"`
+
+	// reportLocation is where the report was written: a local path, or an s3://, blob, or pvc URI.
+	// +optional
+	ReportLocation string `json:"reportLocation,omitempty"`
 
 	// aiScore is the score returned by the AI model (0-100), 0 when AI is disabled
 	// +optional
@@ -227,6 +273,19 @@ type UpgradeAnalysisStatus struct {
 	// +optional
 	AIModel string `json:"aiModel,omitempty"`
 
+	// aiError holds the error message if AI scoring was enabled but failed.
+	// Empty when AI scoring is disabled or succeeded.
+	// +optional
+	AIError string `json:"aiError,omitempty"`
+
+	// addonsChecked is the number of cluster add-ons evaluated for compatibility.
+	// +optional
+	AddonsChecked int `json:"addonsChecked,omitempty"`
+
+	// incompatibleAddons is the number of add-ons found incompatible with targetVersion.
+	// +optional
+	IncompatibleAddons int `json:"incompatibleAddons,omitempty"`
+
 	// lastTotalPods is the pod count from the previous reconciliation, used to compute stability delta
 	// +optional
 	LastTotalPods int `json:"lastTotalPods,omitempty"`
@@ -237,6 +296,7 @@ type UpgradeAnalysisStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Target Version",type=string,JSONPath=`.spec.targetVersion`
 // +kubebuilder:printcolumn:name="Decision",type=string,JSONPath=`.status.decision`

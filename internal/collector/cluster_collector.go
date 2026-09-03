@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -65,6 +66,10 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	podsByDaemonSet := make(map[string][]WorkloadPod)
 	podsByJob := make(map[string][]WorkloadPod)
 
+	// nodesByWorkload maps a logical workload key ("Kind/namespace/name") to the set of
+	// nodes its pods run on, for workload→Node (runs-on) edges in the mirror.
+	nodesByWorkload := make(map[string]map[string]bool)
+
 	// Collect pods across all (non-excluded) namespaces
 	podList := &corev1.PodList{}
 	if err := c.Client.List(ctx, podList); err != nil {
@@ -72,6 +77,13 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 	}
 	for _, pod := range podList.Items {
 		if excluded[pod.Namespace] {
+			continue
+		}
+		// A Succeeded pod has completed its run (e.g. a finished Job). It holds no resources and
+		// isn't a workload that must stay Ready, so it must not count as not-ready or drag Health/
+		// capacity down. Skip it entirely. Failed pods still flow through and count as not-ready,
+		// like any other broken pod.
+		if pod.Status.Phase == corev1.PodSucceeded {
 			continue
 		}
 		snapshot.TotalPods++
@@ -89,37 +101,41 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 			}
 		}
 
-		ready := isPodReady(&pod)
-		var reason string
-		if !ready {
+		// Count currently-crashing service pods that restart at an abnormal rate.
+		if isRestartingAbnormally(&pod, time.Now()) {
+			snapshot.RestartingPods++
+		}
+
+		// Record which node this pod runs on, attributed to its logical workload.
+		recordPodNode(&pod, rsToDeploy, nodesByWorkload)
+
+		// Standalone pods (no controller owner) aren't represented by any workload node, so mirror
+		// them individually — a failing bare pod would otherwise be invisible to the graph and its
+		// namespace risk. Pods owned by a ReplicaSet/Job/Node (incl. mirror pods) are skipped: their
+		// workload or node already stands in for them.
+		if len(pod.OwnerReferences) == 0 {
+			status := "Running"
+			if !isPodReady(&pod) {
+				status = "Down"
+			}
+			snapshot.BarePods = append(snapshot.BarePods, BarePod{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+				Status:    status,
+			})
+		}
+
+		if !isPodReady(&pod) {
 			snapshot.NotReadyPods++
-			reason = podNotReadyReason(&pod)
+			reason := podNotReadyReason(&pod)
 			snapshot.PodIssues = append(snapshot.PodIssues, PodIssue{
 				Namespace: pod.Namespace,
 				Name:      pod.Name,
 				Reason:    reason,
 				Restarts:  restarts,
 			})
-			// Group not-ready pod under its parent workload
 			wp := WorkloadPod{Name: pod.Name, Reason: reason, Restarts: restarts}
-			for _, ref := range pod.OwnerReferences {
-				switch ref.Kind {
-				case "ReplicaSet":
-					if dName, ok := rsToDeploy[pod.Namespace+"/"+ref.Name]; ok {
-						key := pod.Namespace + "/" + dName
-						podsByDeployment[key] = append(podsByDeployment[key], wp)
-					}
-				case "StatefulSet":
-					key := pod.Namespace + "/" + ref.Name
-					podsByStatefulSet[key] = append(podsByStatefulSet[key], wp)
-				case "DaemonSet":
-					key := pod.Namespace + "/" + ref.Name
-					podsByDaemonSet[key] = append(podsByDaemonSet[key], wp)
-				case "Job":
-					key := pod.Namespace + "/" + ref.Name
-					podsByJob[key] = append(podsByJob[key], wp)
-				}
-			}
+			groupNotReadyPod(&pod, wp, rsToDeploy, podsByDeployment, podsByStatefulSet, podsByDaemonSet, podsByJob)
 		}
 	}
 
@@ -156,13 +172,28 @@ func (c *DefaultClusterCollector) Collect(ctx context.Context, scope Scope) (*Cl
 		return nil, err
 	}
 
-	// Collect active Jobs
+	// Collect active and terminally failed Jobs
 	if err := c.collectJobs(ctx, excluded, snapshot, podsByJob); err != nil {
 		return nil, err
 	}
 
+	// Collect Services and Ingresses (dependency-graph inputs)
+	if err := c.collectServices(ctx, excluded, snapshot); err != nil {
+		return nil, err
+	}
+	c.collectIngresses(ctx, excluded, snapshot)
+
+	// Full workload inventory + PVCs for the logical mirror
+	if err := c.collectWorkloads(ctx, excluded, snapshot, nodesByWorkload); err != nil {
+		return nil, err
+	}
+	c.collectPVCs(ctx, excluded, snapshot)
+
 	// Detect deprecated API usage
 	c.detectDeprecatedAPIs(snapshot)
+
+	// Detect installed add-ons (Istio, Cert Manager, ArgoCD, ...) for the compatibility engine
+	c.detectAddons(ctx, snapshot)
 
 	return snapshot, nil
 }
@@ -201,11 +232,14 @@ func (c *DefaultClusterCollector) collectDeployments(ctx context.Context, exclud
 		}
 		key := dep.Namespace + "/" + dep.Name
 		snapshot.DeploymentWorkloads = append(snapshot.DeploymentWorkloads, DeploymentWorkload{
-			Namespace:       dep.Namespace,
-			Name:            dep.Name,
-			ReadyReplicas:   dep.Status.ReadyReplicas,
-			DesiredReplicas: desired,
-			Pods:            podsByDeployment[key],
+			Namespace:        dep.Namespace,
+			Name:             dep.Name,
+			ReadyReplicas:    dep.Status.ReadyReplicas,
+			DesiredReplicas:  desired,
+			Pods:             podsByDeployment[key],
+			PodLabels:        dep.Spec.Template.Labels,
+			ConfigRefs:       podSpecConfigRefs(&dep.Spec.Template.Spec),
+			UsesIstioSidecar: usesIstioSidecar(dep.Spec.Template.Labels, dep.Spec.Template.Annotations),
 		})
 	}
 	return nil
@@ -368,7 +402,8 @@ func (c *DefaultClusterCollector) collectDaemonSets(ctx context.Context, exclude
 	return nil
 }
 
-// collectJobs detects active Jobs that may be interrupted during the upgrade.
+// collectJobs detects active Jobs that may be interrupted during the upgrade and Jobs
+// whose Failed condition confirms Kubernetes has stopped retrying them.
 func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[string]bool, snapshot *ClusterSnapshot, podsByJob map[string][]WorkloadPod) error {
 	jobList := &batchv1.JobList{}
 	if err := c.Client.List(ctx, jobList); err != nil {
@@ -378,12 +413,19 @@ func (c *DefaultClusterCollector) collectJobs(ctx context.Context, excluded map[
 		if excluded[job.Namespace] {
 			continue
 		}
-		if job.Status.Active > 0 {
+		failed, reason := jobFailedReason(&job)
+		if job.Status.Active > 0 || failed {
 			key := job.Namespace + "/" + job.Name
+			status := JobStatusActive
+			if failed {
+				status = JobStatusFailed
+			}
 			snapshot.JobIssues = append(snapshot.JobIssues, JobIssue{
 				Namespace: job.Namespace,
 				Name:      job.Name,
 				Active:    job.Status.Active,
+				Status:    status,
+				Reason:    reason,
 				Pods:      podsByJob[key],
 			})
 		}

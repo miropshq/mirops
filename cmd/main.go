@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/collector"
 	"github.com/miropshq/mirops/internal/controller"
+	"github.com/miropshq/mirops/internal/crd"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	discoveryclient "k8s.io/client-go/discovery"
@@ -162,6 +164,13 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 
+	// Install the operator's own CRDs (embedded in this image) before the manager starts watching
+	// them. The CRDs always match this binary, so there's no separate chart install or version skew.
+	if err := crd.Install(context.Background(), cfg); err != nil {
+		setupLog.Error(err, "unable to install embedded CRDs")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -198,11 +207,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start reports HTTP server — serves report JSON files regardless of
-	// whether the configured source is file, s3, or blob.
+	// Start reports HTTP server. File destinations are served from disk; remote destinations
+	// (s3/blob/pvc) are read back on demand — no local replica — and a connection failure returns
+	// 502 with a JSON error the UI can show.
+	reportServer := &controller.ReportServer{
+		Client:            mgr.GetClient(),
+		ReportsDir:        reportsDir,
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+	}
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/reports/", corsMiddleware(http.StripPrefix("/reports/", http.FileServer(http.Dir(reportsDir)))))
+		mux.Handle("/reports/", corsMiddleware(http.StripPrefix("/reports/", reportServer)))
 		setupLog.Info("starting reports server", "addr", reportsAddr, "dir", reportsDir)
 		if err := http.ListenAndServe(reportsAddr, mux); err != nil {
 			setupLog.Error(err, "reports server failed")
@@ -210,10 +225,11 @@ func main() {
 	}()
 
 	if err := (&controller.UpgradeAnalysisReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Collector:  clusterCollector,
-		ReportsDir: reportsDir,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Collector:         clusterCollector,
+		ReportsDir:        reportsDir,
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
 		os.Exit(1)

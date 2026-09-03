@@ -1,0 +1,29 @@
+name: "Lint PR title"
+
+# Validates the PR title against Conventional Commits. With squash merge the PR
+# title becomes the single commit on main, so this is what semantic-release reads
+# to pick the version bump. Runs on every title/body/branch update.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+# PR updates can happen in quick succession, triggering this workflow several
+# times. Keep only the latest run per PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: thehanimo/pr-title-checker@7fbfe05602bdd86f926d3fb3bccb6f3aed43bc70 # v1.4.3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          configuration_path: ".github/pr-title-checker-config.json"

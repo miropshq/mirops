@@ -12,7 +12,7 @@ spec:
     listKind: UpgradeAnalysisList
     plural: upgradeanalyses
     singular: upgradeanalysis
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.targetVersion
@@ -52,20 +52,170 @@ spec:
           spec:
             description: spec defines the desired state of UpgradeAnalysis
             properties:
+              ai:
+                description: |-
+                  ai configures optional AI-assisted scoring.
+                  When enabled the final score becomes baseScore*0.7 + aiScore*0.3.
+                properties:
+                  credentialsSecret:
+                    description: |-
+                      credentialsSecret is a Secret in the same namespace containing the API key.
+                      Key name: ANTHROPIC_API_KEY or OPENAI_API_KEY
+                    type: string
+                  enabled:
+                    default: false
+                    description: enabled activates AI scoring (base 70% + AI 30%)
+                    type: boolean
+                  maxTokens:
+                    default: 2048
+                    description: |-
+                      maxTokens is the maximum number of tokens the model may generate in its response. Applies to
+                      both Anthropic and OpenAI. Higher allows a longer AI explanation but costs more; defaults to 2048.
+                    format: int32
+                    maximum: 32768
+                    minimum: 1
+                    type: integer
+                  model:
+                    description: model is the model name to call (e.g. claude-sonnet-4-6)
+                    type: string
+                  provider:
+                    allOf:
+                    - enum:
+                      - anthropic
+                      - openai
+                    - enum:
+                      - anthropic
+                      - openai
+                    description: provider is the AI backend to use
+                    type: string
+                  remediation:
+                    description: remediation configures optional AI-proposed remediation
+                      actions.
+                    properties:
+                      autoApprove:
+                        default: false
+                        description: |-
+                          autoApprove executes all proposed actions immediately without manual approval.
+                          When false (default) the plan waits for spec.approved=true before executing.
+                        type: boolean
+                      enabled:
+                        default: false
+                        description: |-
+                          enabled allows the AI to propose remediation actions after scoring.
+                          When true, a RemediationPlan CR is created with the proposed actions.
+                        type: boolean
+                      maxRiskLevel:
+                        allOf:
+                        - enum:
+                          - low
+                          - medium
+                          - high
+                        - enum:
+                          - low
+                          - medium
+                          - high
+                        default: low
+                        description: |-
+                          maxRiskLevel is the highest risk level of actions the AI may propose.
+                          Actions above this level are excluded from the plan.
+                        type: string
+                    required:
+                    - enabled
+                    type: object
+                required:
+                - enabled
+                type: object
+              resync:
+                description: |-
+                  resync controls automatic re-analysis on an interval.
+                  When omitted the analysis runs once per reconcile.
+                properties:
+                  interval:
+                    description: |-
+                      interval is how often to re-run the analysis (e.g. "15m", "1h").
+                      When empty, the analysis runs once and stops.
+                    type: string
+                type: object
+              scope:
+                description: |-
+                  scope controls which namespaces are included in the analysis.
+                  Defaults to "all" (system + application namespaces).
+                properties:
+                  excludeNamespaces:
+                    description: excludeNamespaces is an optional list of additional
+                      namespaces to skip.
+                    items:
+                      type: string
+                    type: array
+                  mode:
+                    default: all
+                    description: |-
+                      mode controls which namespaces are included.
+                      "all" includes system and application namespaces (default).
+                      "application" excludes kube-system and other system namespaces.
+                    enum:
+                    - all
+                    - application
+                    type: string
+                required:
+                - mode
+                type: object
+              scoringProfile:
+                default: production
+                description: |-
+                  scoringProfile selects how strict the upgrade-readiness scoring is.
+                  "production" (default) is strict; "non-production" is lenient.
+                enum:
+                - production
+                - non-production
+                type: string
               source:
                 description: source defines where the analysis report will be written
                 properties:
+                  accountName:
+                    description: accountName is the Azure Storage account name when
+                      type is "blob"
+                    type: string
+                  blobName:
+                    description: blobName is the Azure Blob object name when type
+                      is "blob"
+                    type: string
+                  bucket:
+                    description: bucket is the S3 bucket name when type is "s3"
+                    type: string
+                  containerName:
+                    description: containerName is the Azure Blob container name when
+                      type is "blob"
+                    type: string
+                  credentialsSecret:
+                    description: |-
+                      credentialsSecret is the name of a Kubernetes Secret in the same namespace
+                      containing cloud credentials. Optional when using IRSA (AWS) or Workload Identity (Azure).
+                      For S3: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+                      For Blob: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+                    type: string
+                  key:
+                    description: key is the S3 object key (path inside bucket) when
+                      type is "s3"
+                    type: string
                   path:
-                    description: path is the file path when type is "file"
+                    description: |-
+                      path is the report file name when type is "file" (the directory is fixed at the operator's
+                      reports dir; only the basename is used). Defaults to "<name>.mirops". When type is "pvc" it is
+                      the directory on the mounted PersistentVolumeClaim (the report is written as <name>.mirops there).
+                    type: string
+                  region:
+                    description: region is the AWS region when type is "s3"
                     type: string
                   type:
                     default: file
                     description: 'type is the storage backend for the report: file,
-                      s3, or blob'
+                      s3, blob, or pvc'
                     enum:
                     - file
                     - s3
                     - blob
+                    - pvc
                     type: string
                 required:
                 - type
@@ -80,6 +230,27 @@ spec:
           status:
             description: status defines the observed state of UpgradeAnalysis
             properties:
+              addonsChecked:
+                description: addonsChecked is the number of cluster add-ons evaluated
+                  for compatibility.
+                type: integer
+              aiError:
+                description: |-
+                  aiError holds the error message if AI scoring was enabled but failed.
+                  Empty when AI scoring is disabled or succeeded.
+                type: string
+              aiModel:
+                description: aiModel is the model used for AI scoring, only set when
+                  ai.enabled is true
+                type: string
+              aiReasoning:
+                description: aiReasoning is the explanation provided by the AI model,
+                  only set when ai.enabled is true
+                type: string
+              aiScore:
+                description: aiScore is the score returned by the AI model (0-100),
+                  0 when AI is disabled
+                type: integer
               conditions:
                 description: conditions represent the current state of the UpgradeAnalysis
                   resource.
@@ -143,17 +314,58 @@ spec:
                 x-kubernetes-list-type: map
               decision:
                 description: 'decision is the result of the analysis: SAFE, WARNING,
-                  or BLOCK'
+                  or CRITICAL'
                 type: string
+              incompatibleAddons:
+                description: incompatibleAddons is the number of add-ons found incompatible
+                  with targetVersion.
+                type: integer
               lastAnalysisTime:
                 description: lastAnalysisTime is when the last analysis was performed
                 format: date-time
                 type: string
+              lastRefresh:
+                description: |-
+                  lastRefresh is the value of the mirops.io/refresh annotation honored by the last analysis.
+                  Bumping that annotation forces an immediate re-analysis even within the resync interval.
+                type: string
+              lastTotalPods:
+                description: lastTotalPods is the pod count from the previous reconciliation,
+                  used to compute stability delta
+                type: integer
+              lastTotalRestarts:
+                description: lastTotalRestarts is the restart count from the previous
+                  reconciliation, used to compute stability delta
+                type: integer
+              observedGeneration:
+                description: |-
+                  observedGeneration is the spec generation the last analysis ran against. A spec change
+                  re-runs the analysis immediately, even within the resync interval.
+                format: int64
+                type: integer
               reason:
                 description: reason is a human-readable explanation of the decision
                 type: string
+              reportError:
+                description: |-
+                  reportError is the error message when the report could not be written to (or read back from)
+                  its destination — e.g. an S3/Blob/PVC connection failure. Empty on success. Surfaced to the
+                  UI so a remote-storage failure isn't hidden in the pod logs.
+                type: string
+              reportLocation:
+                description: 'reportLocation is where the report was written: a local
+                  path, or an s3://, blob, or pvc URI.'
+                type: string
               reportPath:
-                description: reportPath is where the JSON report was written
+                description: reportPath is where the JSON report was written (local
+                  file destination only)
+                type: string
+              reportState:
+                description: 'reportState is the outcome of persisting the report:
+                  "written" or "failed".'
+                enum:
+                - written
+                - failed
                 type: string
               totalScore:
                 description: totalScore is the computed upgrade readiness score (0-100)

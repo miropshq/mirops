@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/miropshq/mirops/internal/analysis"
 )
 
@@ -24,38 +26,36 @@ type BlobExporter struct {
 	TenantID      string
 }
 
+// client builds an Azure Blob client: a Service Principal when clientID/secret/tenant are provided,
+// otherwise the default chain (Workload Identity / Managed Identity).
+func (e *BlobExporter) client() (*azblob.Client, error) {
+	url := fmt.Sprintf("https://%s.blob.core.windows.net/", e.AccountName)
+	if e.ClientID != "" && e.ClientSecret != "" && e.TenantID != "" {
+		cred, err := azidentity.NewClientSecretCredential(e.TenantID, e.ClientID, e.ClientSecret, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating Azure SP credential: %w", err)
+		}
+		return azblob.NewClient(url, cred, nil)
+	}
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating Azure default credential: %w", err)
+	}
+	return azblob.NewClient(url, cred, nil)
+}
+
 func (e *BlobExporter) Export(report *analysis.Report) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling report: %w", err)
 	}
 
-	ctx := context.Background()
-	url := fmt.Sprintf("https://%s.blob.core.windows.net/", e.AccountName)
-
-	var client *azblob.Client
-	if e.ClientID != "" && e.ClientSecret != "" && e.TenantID != "" {
-		cred, err := azidentity.NewClientSecretCredential(e.TenantID, e.ClientID, e.ClientSecret, nil)
-		if err != nil {
-			return fmt.Errorf("creating Azure SP credential: %w", err)
-		}
-		client, err = azblob.NewClient(url, cred, nil)
-		if err != nil {
-			return fmt.Errorf("creating Azure Blob client: %w", err)
-		}
-	} else {
-		// Workload Identity / Managed Identity
-		cred, err := azidentity.NewDefaultAzureCredential(nil)
-		if err != nil {
-			return fmt.Errorf("creating Azure default credential: %w", err)
-		}
-		client, err = azblob.NewClient(url, cred, nil)
-		if err != nil {
-			return fmt.Errorf("creating Azure Blob client: %w", err)
-		}
+	client, err := e.client()
+	if err != nil {
+		return err
 	}
 
-	_, err = client.UploadBuffer(ctx, e.ContainerName, e.BlobName, data, &azblob.UploadBufferOptions{
+	_, err = client.UploadBuffer(context.Background(), e.ContainerName, e.BlobName, data, &azblob.UploadBufferOptions{
 		HTTPHeaders: &blob.HTTPHeaders{
 			BlobContentType: toPtr("application/json"),
 		},
@@ -65,6 +65,23 @@ func (e *BlobExporter) Export(report *analysis.Report) error {
 	}
 
 	return nil
+}
+
+func (e *BlobExporter) Read() ([]byte, error) {
+	client, err := e.client()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.DownloadStream(context.Background(), e.ContainerName, e.BlobName, nil)
+	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil, fmt.Errorf("report blob %s/%s not written yet: %w", e.ContainerName, e.BlobName, ErrNotFound)
+		}
+		return nil, fmt.Errorf("reading report from blob %s/%s/%s: %w", e.AccountName, e.ContainerName, e.BlobName, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 func (e *BlobExporter) Location() string {

@@ -1,0 +1,155 @@
+name: CI - Feature / PR (validate)
+
+# Validation-only pipeline. Runs on every PR targeting main. It never pushes
+# images or artifacts — it only proves the code is sound so a green check means
+# the PR is safe to merge.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  # ─── Lint ──────────────────────────────────────────────────────────────────────
+  # Go linter + golangci config check + Dockerfile linters.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify golangci-lint config
+        run: make lint-config
+
+      - name: Lint
+        run: make lint
+
+      - name: Lint Dockerfile (operator)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.operator
+
+      - name: Lint Dockerfile (remediation)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.remediation
+
+  # ─── Verify generated code ──────────────────────────────────────────────────────
+  # Re-runs the generators and `go mod tidy`, then fails if the working tree is
+  # dirty. This catches PRs that edited *_types.go but forgot to regenerate
+  # DeepCopy/CRDs, or changed imports without tidying go.mod — a very common OSS
+  # mistake that would otherwise only surface after merge.
+  verify-generated:
+    name: Verify generated code is up to date
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate code and manifests
+        run: make generate manifests
+
+      - name: Tidy modules
+        run: go mod tidy
+
+      - name: Fail if anything changed
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Run 'make generate manifests' and 'go mod tidy', then commit the result."
+            exit 1
+          fi
+
+  # ─── Test ──────────────────────────────────────────────────────────────────────
+  # Unit tests with envtest (also runs fmt + vet via the test target).
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: verify-generated
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: make test
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: cover.out
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ─── Build ─────────────────────────────────────────────────────────────────────
+  # Compiles the binary and builds both images (without pushing) to prove the
+  # Dockerfiles still produce valid images for this commit.
+  build:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: operator
+            dockerfile: Dockerfile.operator
+          - image: remediation
+            dockerfile: Dockerfile.remediation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        run: make build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}-pr
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-pr
+
+  # ─── Vulnerability scan ──────────────────────────────────────────────────────────
+  # Checks the code and its dependencies against the Go vulnerability database.
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

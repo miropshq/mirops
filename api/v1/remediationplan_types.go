@@ -134,6 +134,7 @@ type RemediationPlanStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Analysis",type=string,JSONPath=`.spec.upgradeAnalysisRef`
 // +kubebuilder:printcolumn:name="Approved",type=boolean,JSONPath=`.spec.approved`

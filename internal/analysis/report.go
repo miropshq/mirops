@@ -1,5 +1,10 @@
 package analysis
 
+import (
+	"github.com/miropshq/mirops/internal/compat"
+	"github.com/miropshq/mirops/internal/graph"
+)
+
 // Report is the full JSON output written to the source destination
 // and consumed by mirops-cli via --source flag.
 // Field order: identity → verdict → scores → conditions → metrics → workloads → issues (verbose last).
@@ -16,6 +21,18 @@ type Report struct {
 	Metrics        Metrics         `json:"metrics"`
 	Workloads      ReportWorkloads `json:"workloads"`
 	Issues         []string        `json:"issues,omitempty"`
+
+	// Mirops engine output (logical mirror): add-on compatibility, dependency graph,
+	// and per-namespace risk. Populated by the controller after the base analysis.
+	Addons []compat.AddonCompatibility `json:"addons,omitempty"`
+	Graph  *graph.Graph                `json:"graph,omitempty"`
+	Risk   *RiskBreakdown              `json:"risk,omitempty"`
+}
+
+// RiskBreakdown holds the engine's per-namespace risk aggregation. Per-component risk
+// lives on each node inside Graph.
+type RiskBreakdown struct {
+	ByNamespace []graph.NamespaceRisk `json:"byNamespace,omitempty"`
 }
 
 // ReportWorkloads groups cluster resources by kind for easy inspection.
@@ -26,6 +43,8 @@ type ReportWorkloads struct {
 	DaemonSets     []DaemonSetReport     `json:"daemonsets"`
 	Jobs           []JobReport           `json:"jobs"`
 	PDBs           []PDBReport           `json:"pdbs,omitempty"`
+	PVCs           []PVCReport           `json:"pvcs,omitempty"`
+	BarePods       []BarePodReport       `json:"barePods,omitempty"`
 	DeprecatedAPIs []DeprecatedAPIReport `json:"deprecatedApis,omitempty"`
 }
 
@@ -68,12 +87,27 @@ type JobReport struct {
 	Namespace string              `json:"namespace"`
 	Name      string              `json:"name"`
 	Active    int32               `json:"active"`
+	Status    string              `json:"status"`
+	Reason    string              `json:"reason,omitempty"`
 	Pods      []WorkloadPodReport `json:"pods,omitempty"`
 }
 
 type PDBReport struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+}
+
+type PVCReport struct {
+	Namespace    string `json:"namespace"`
+	Name         string `json:"name"`
+	StorageClass string `json:"storageClass,omitempty"`
+	Phase        string `json:"phase"` // Bound | Pending | Lost
+}
+
+type BarePodReport struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Status    string `json:"status"` // Running | Down
 }
 
 type DeprecatedAPIReport struct {
@@ -91,13 +125,13 @@ type Scores struct {
 
 // BaseScores is the rule-based component of the total score.
 type BaseScores struct {
-	Score        int    `json:"score"`
-	Weight       string `json:"weight"`
-	Contribution int    `json:"contribution"`
-	Health       int    `json:"health"`
-	Capacity     int    `json:"capacity"`
-	Stability    int    `json:"stability"`
-	Risk         int    `json:"risk"`
+	Score         int    `json:"score"`
+	Weight        string `json:"weight"`
+	Contribution  int    `json:"contribution"`
+	Health        int    `json:"health"`
+	Capacity      int    `json:"capacity"`
+	Stability     int    `json:"stability"`
+	Compatibility int    `json:"compatibility"`
 }
 
 // AIScores is the AI model component of the total score.
@@ -117,9 +151,10 @@ type Metrics struct {
 }
 
 type PodMetrics struct {
-	Total    int `json:"total"`
-	NotReady int `json:"notReady"`
-	Restarts int `json:"restarts"`
+	Total      int `json:"total"`
+	NotReady   int `json:"notReady"`
+	Restarts   int `json:"restarts"`
+	Restarting int `json:"restarting,omitempty"` // service pods crashing at an abnormal rate
 }
 
 type ResourceMetrics struct {
@@ -128,7 +163,7 @@ type ResourceMetrics struct {
 }
 
 type StabilityMetrics struct {
-	PodDelta     float64 `json:"podDelta"`
+	PodDropRatio float64 `json:"podDropRatio"` // fraction of pods lost since the last run (0 on growth)
 	RestartDelta int     `json:"restartDelta"`
 }
 
@@ -141,11 +176,14 @@ type Conditions struct {
 	PDBBlocking        bool `json:"pdbBlocking"`
 	HighCPUPressure    bool `json:"highCpuPressure"`
 	HighMemoryPressure bool `json:"highMemoryPressure"`
-	UnstableCluster    bool `json:"unstableCluster"`
+	UnstableCluster    bool `json:"unstableCluster"`  // notReady > profile.UnstableWarnPct
+	SeverelyUnstable   bool `json:"severelyUnstable"` // notReady > profile.UnstableBlockPct
 }
 
 type Decision struct {
-	Threshold int    `json:"threshold"`
-	Allow     bool   `json:"allow"`
-	Level     string `json:"level"`
+	Allow bool   `json:"allow"`
+	Level string `json:"level"`
+	// Blockers lists every critical condition that forced level=CRITICAL (allow=false),
+	// so consumers (mirops-cli --enforce, Headlamp) can show all reasons, not just one.
+	Blockers []string `json:"blockers,omitempty"`
 }

@@ -41,13 +41,53 @@ type NodeWorkload struct {
 	Conditions []string `json:"conditions,omitempty"`
 }
 
+// Workload is a generic, fully-enumerated workload used to build the logical mirror.
+// Unlike the *Issue structs (only populated on problems), every workload of every kind is
+// captured here — healthy or not — so the dependency graph is a complete mirror.
+type Workload struct {
+	Kind             string // Deployment | StatefulSet | DaemonSet | Job | CronJob
+	Namespace        string
+	Name             string
+	Status           string            // derived, kind-specific
+	PodLabels        map[string]string // pod-template labels, for Service selector matching
+	ConfigRefs       []ConfigRef       // ConfigMaps/Secrets consumed
+	PVCs             []string          // PersistentVolumeClaim names consumed
+	Nodes            []string          // nodes the workload's pods are scheduled on
+	UsesIstioSidecar bool
+}
+
+// BarePod is a standalone Pod with no controlling workload (created directly — `kubectl run`, a raw
+// Pod manifest). These aren't represented by any workload node, so they are mirrored individually;
+// otherwise a failing bare pod would be invisible to the dependency graph and its namespace risk.
+// Status is readiness-derived ("Down" when not ready) so the risk engine flags it like a Down
+// workload.
+type BarePod struct {
+	Namespace string
+	Name      string
+	Status    string // "Running" when ready, "Down" when not ready
+}
+
+// PVCRef represents a PersistentVolumeClaim for the dependency graph (stateful data at
+// risk during a node drain).
+type PVCRef struct {
+	Namespace    string
+	Name         string
+	StorageClass string
+	Phase        string // Bound | Pending | Lost
+	BindingMode  string // StorageClass volumeBindingMode: Immediate | WaitForFirstConsumer | ""
+}
+
 // DeploymentWorkload represents a deployment with its pod details
 type DeploymentWorkload struct {
-	Namespace       string        `json:"namespace"`
-	Name            string        `json:"name"`
-	ReadyReplicas   int32         `json:"readyReplicas"`
-	DesiredReplicas int32         `json:"desiredReplicas"`
-	Pods            []WorkloadPod `json:"pods,omitempty"`
+	Namespace        string            `json:"namespace"`
+	Name             string            `json:"name"`
+	ReadyReplicas    int32             `json:"readyReplicas"`
+	DesiredReplicas  int32             `json:"desiredReplicas"`
+	Pods             []WorkloadPod     `json:"pods,omitempty"`
+	PodLabels        map[string]string `json:"-"` // pod-template labels, for Service selector matching
+	ConfigRefs       []ConfigRef       `json:"-"` // ConfigMaps/Secrets consumed
+	Nodes            []string          `json:"-"` // nodes the pods are scheduled on
+	UsesIstioSidecar bool              `json:"-"` // pod template requests istio injection
 }
 
 // StatefulSetIssue describes a StatefulSet that is not fully ready
@@ -67,11 +107,25 @@ type DaemonSetIssue struct {
 	Pods              []WorkloadPod
 }
 
-// JobIssue describes an active Job that may be interrupted by the upgrade
+// annotationTrue is the string value Kubernetes uses for boolean annotations/labels.
+const annotationTrue = "true"
+
+// Job status values reported on JobIssue.Status.
+const (
+	JobStatusActive    = "Active"
+	JobStatusFailed    = "Failed"
+	JobStatusCompleted = "Completed"
+	JobStatusPending   = "Pending"
+)
+
+// JobIssue describes an active Job that may be interrupted by the upgrade or a
+// terminally failed Job that exhausted its retries.
 type JobIssue struct {
 	Namespace string
 	Name      string
 	Active    int32
+	Status    string // Active | Failed
+	Reason    string // Kubernetes Job condition reason, e.g. BackoffLimitExceeded
 	Pods      []WorkloadPod
 }
 
@@ -81,6 +135,36 @@ type DeprecatedAPI struct {
 	Version   string
 	Resource  string
 	RemovedIn string // k8s version when it's removed
+}
+
+// ServiceRef represents a Service for the dependency graph.
+type ServiceRef struct {
+	Namespace string
+	Name      string
+	Type      string            // ClusterIP, NodePort, LoadBalancer, ExternalName
+	Selector  map[string]string // matches pod labels of the backing workload
+}
+
+// IngressRef represents an Ingress and the Services it routes to.
+type IngressRef struct {
+	Namespace string
+	Name      string
+	Services  []string // backend service names
+	HasTLS    bool     // signals a likely cert-manager dependency
+}
+
+// ConfigRef is a ConfigMap or Secret a workload consumes.
+type ConfigRef struct {
+	Kind string // "ConfigMap" | "Secret"
+	Name string
+}
+
+// DetectedAddon is a recognized cluster add-on and the version found.
+type DetectedAddon struct {
+	Name        string // istio, cert-manager, argocd, prometheus, ingress-nginx, ...
+	Version     string // from app.kubernetes.io/version label or image tag; "" if unknown
+	Namespace   string
+	DetectedVia string // "crd" | "deployment" | "namespace"
 }
 
 type ClusterSnapshot struct {
@@ -94,6 +178,12 @@ type ClusterSnapshot struct {
 	NotReadyPods  int
 	TotalRestarts int
 	PodIssues     []PodIssue
+
+	// RestartingPods counts service pods (restartPolicy=Always) that are currently crashing
+	// (CrashLoopBackOff / ImagePullBackOff / ErrImagePull) at an abnormal rate (>= 10
+	// restarts/24h). Each such pod counts once; the health score uses the ratio
+	// RestartingPods/TotalPods so it scales with cluster size.
+	RestartingPods int
 
 	// Capacity (CPU/Mem requests vs node capacity)
 	CPURequests float64
@@ -112,6 +202,14 @@ type ClusterSnapshot struct {
 	AddonIssues       int
 	PDBBlocking       bool
 	PDBIssues         []PDBIssue
+
+	// Mirror / dependency-graph inputs
+	Services       []ServiceRef
+	Ingresses      []IngressRef
+	DetectedAddons []DetectedAddon
+	Workloads      []Workload // all workloads, every kind, healthy or not
+	BarePods       []BarePod  // standalone pods with no owning workload
+	PVCs           []PVCRef
 
 	// Workload hierarchy (for report workloads section)
 	NodeWorkloads       []NodeWorkload
