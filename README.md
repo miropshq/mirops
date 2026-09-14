@@ -369,7 +369,7 @@ Each operator release **embeds** a specific published matrix snapshot:
 
 | Operator version | Embedded matrix |
 |------------------|-----------------|
-| `0.1.0` | `v2026.08.29` |
+| `0.1.0` | `v2026.09.03` |
 
 **Updating the matrix without a new operator image.** The embedded snapshot is deterministic and
 offline-safe, but you can decouple the matrix from the operator build: the Helm chart's
