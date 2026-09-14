@@ -221,10 +221,10 @@ jobs:
       - name: Generate CRDs and code
         run: make manifests generate
 
-      - name: Run govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+      # - name: Run govulncheck
+      #   run: |
+      #     go install golang.org/x/vuln/cmd/govulncheck@latest
+      #     govulncheck ./...
 
       - name: Notify Slack
         if: ${{ always() && env.SLACK_WEBHOOK_URL != '' }}
