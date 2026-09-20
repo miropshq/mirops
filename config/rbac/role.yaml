@@ -65,35 +65,10 @@ rules:
   - list
   - watch
 - apiGroups:
-  - mirops.com
-  resources:
-  - upgradeanalyses
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - mirops.com
-  resources:
-  - upgradeanalyses/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - mirops.com
-  resources:
-  - upgradeanalyses/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
   - mirops.mirops.io
   resources:
   - remediationplans
+  - upgradeanalyses
   verbs:
   - create
   - delete
@@ -106,9 +81,16 @@ rules:
   - mirops.mirops.io
   resources:
   - remediationplans/status
+  - upgradeanalyses/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - mirops.mirops.io
+  resources:
+  - upgradeanalyses/finalizers
+  verbs:
   - update
 - apiGroups:
   - networking.k8s.io
