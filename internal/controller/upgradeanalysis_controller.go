@@ -60,9 +60,9 @@ type UpgradeAnalysisReconciler struct {
 	aiCacheMu sync.Mutex
 }
 
-// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=mirops.com,resources=upgradeanalyses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mirops.mirops.io,resources=upgradeanalyses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mirops.mirops.io,resources=upgradeanalyses/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mirops.mirops.io,resources=upgradeanalyses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
