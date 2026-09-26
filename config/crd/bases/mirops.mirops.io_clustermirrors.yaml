@@ -98,6 +98,61 @@ spec:
                 required:
                 - mode
                 type: object
+              source:
+                description: |-
+                  source is where the mirror's report (<name>.mirror) is written on every rebuild — the same
+                  destinations as an UpgradeAnalysis: file (default, the operator's reports dir), s3, blob or pvc.
+                  Remote destinations keep no copy in the pod; the reports server reads them back on demand, and a
+                  pipeline can read the report straight from the bucket.
+                properties:
+                  accountName:
+                    description: accountName is the Azure Storage account name when
+                      type is "blob"
+                    type: string
+                  blobName:
+                    description: blobName is the Azure Blob object name when type
+                      is "blob"
+                    type: string
+                  bucket:
+                    description: bucket is the S3 bucket name when type is "s3"
+                    type: string
+                  containerName:
+                    description: containerName is the Azure Blob container name when
+                      type is "blob"
+                    type: string
+                  credentialsSecret:
+                    description: |-
+                      credentialsSecret is the name of a Kubernetes Secret in the same namespace
+                      containing cloud credentials. Optional when using IRSA (AWS) or Workload Identity (Azure).
+                      For S3: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+                      For Blob: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+                    type: string
+                  key:
+                    description: key is the S3 object key (path inside bucket) when
+                      type is "s3"
+                    type: string
+                  path:
+                    description: |-
+                      path is the report file name when type is "file" (the directory is fixed at the operator's
+                      reports dir; only the basename is used). Defaults to "<name>.mirops". When type is "pvc" it is
+                      the directory on the mounted PersistentVolumeClaim (the report is written as <name>.mirops there).
+                    type: string
+                  region:
+                    description: region is the AWS region when type is "s3"
+                    type: string
+                  type:
+                    default: file
+                    description: 'type is the storage backend for the report: file,
+                      s3, blob, or pvc'
+                    enum:
+                    - file
+                    - s3
+                    - blob
+                    - pvc
+                    type: string
+                required:
+                - type
+                type: object
             type: object
           status:
             description: status defines the observed state of ClusterMirror
@@ -210,10 +265,26 @@ spec:
                   forces an immediate rebuild even within the refresh interval.
                 format: int64
                 type: integer
+              reportError:
+                description: |-
+                  reportError is the error message when the report could not be written to its destination —
+                  e.g. an S3/Blob/PVC failure. Empty on success.
+                type: string
+              reportLocation:
+                description: 'reportLocation is where the last report was written:
+                  a local path, or an s3://, blob or pvc URI.'
+                type: string
+              reportState:
+                description: 'reportState is the outcome of writing the last report:
+                  "written" or "failed".'
+                enum:
+                - written
+                - failed
+                type: string
               syncError:
                 description: |-
-                  syncError holds the error message when the last rebuild failed (e.g. a collector error).
-                  Empty on success.
+                  syncError holds the error message when the last rebuild failed (e.g. a collector error), or when
+                  the rebuild succeeded but its report couldn't be written. Empty on success.
                 type: string
             type: object
         required:

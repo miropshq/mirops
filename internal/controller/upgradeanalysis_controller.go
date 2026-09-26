@@ -237,21 +237,21 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	switch t := ua.Spec.Source.Type; t {
 	case miropsv1.SourceTypeS3, miropsv1.SourceTypeBlob, miropsv1.SourceTypePVC:
 		ua.Status.ReportPath = ""
-		exp, err := buildExporter(ctx, r.Client, r.OperatorNamespace, ua)
+		exp, err := buildExporter(ctx, r.Client, r.OperatorNamespace, ua.Name, ua.Spec.Source, reportExt)
 		if err != nil {
 			reportErr = err
 			ua.Status.ReportLocation = ""
 		} else {
 			ua.Status.ReportLocation = exp.Location()
-			if err := exp.Export(report); err != nil {
+			if err := exporter.Export(exp, report); err != nil {
 				reportErr = err
 			} else {
 				log.Info("Report exported", "type", t, "location", exp.Location())
 			}
 		}
 	default:
-		localPath := filepath.Join(r.ReportsDir, reportFileName(ua))
-		if err := exporter.NewFileExporter(localPath).Export(report); err != nil {
+		localPath := filepath.Join(r.ReportsDir, localReportName(ua.Name, ua.Spec.Source, reportExt))
+		if err := exporter.Export(exporter.NewFileExporter(localPath), report); err != nil {
 			reportErr = err
 		} else {
 			log.Info("Report written locally", "path", localPath)
@@ -363,92 +363,4 @@ func (r *UpgradeAnalysisReconciler) loadCompatMatrix(ctx context.Context, namesp
 		return compat.DefaultMatrix(), nil
 	}
 	return compat.LoadMatrix([]byte(cm.Data["matrix.yaml"]))
-}
-
-// reportFileName returns the file name for the served report. For source.type: file the user may
-// set source.path (basename only — the directory is fixed); otherwise it defaults to "<name>.mirops",
-// matching the extension used for remote destinations.
-// reportState values recorded on UpgradeAnalysis.status.reportState.
-const (
-	reportStateWritten = "written"
-	reportStateFailed  = "failed"
-)
-
-func reportFileName(ua *miropsv1.UpgradeAnalysis) string {
-	if ua.Spec.Source.Type == miropsv1.SourceTypeFile && ua.Spec.Source.Path != "" {
-		if base := filepath.Base(ua.Spec.Source.Path); base != "." && base != ".." && base != string(filepath.Separator) {
-			return base
-		}
-	}
-	return ua.Name + ".mirops"
-}
-
-// buildExporter selects and configures the right exporter based on source.type.
-// When credentialsSecret is set, it reads credentials from the referenced Secret.
-// reportExt is the default report extension. It only applies when the destination name is left
-// unset — otherwise the user owns the name and its extension. `.mirops` keeps reports distinct from
-// config files sharing a bucket/container/PVC (filter with `*.mirops`); the content is uploaded as
-// application/json regardless.
-const reportExt = ".mirops"
-
-// reportObjectName resolves a remote report's object/blob name. The user owns the name AND the
-// extension: whatever they set in blobName/key is used verbatim, so they choose `.mirops` (or
-// anything). Only when it's unset does mirops fall back to "<analysis name>.mirops". It's used inside
-// buildExporter, so the reconciler's write and the report server's read-back always agree.
-func reportObjectName(configured, uaName string) string {
-	if configured != "" {
-		return configured
-	}
-	return uaName + reportExt
-}
-
-// buildExporter constructs the Exporter for a CR's configured destination. It is a package
-// function (not a method) so both the reconciler and the reports HTTP server can build the same
-// exporter to write and read back a report.
-func buildExporter(ctx context.Context, c client.Client, operatorNamespace string, ua *miropsv1.UpgradeAnalysis) (exporter.Exporter, error) {
-	src := ua.Spec.Source
-
-	// Read optional credentials secret
-	var secretData map[string][]byte
-	if src.CredentialsSecret != "" {
-		secret := &corev1.Secret{}
-		if err := c.Get(ctx, types.NamespacedName{
-			Name:      src.CredentialsSecret,
-			Namespace: operatorNamespace,
-		}, secret); err != nil {
-			return nil, fmt.Errorf("reading credentials secret %q: %w", src.CredentialsSecret, err)
-		}
-		secretData = secret.Data
-	}
-
-	switch src.Type {
-	case miropsv1.SourceTypeS3:
-		return &exporter.S3Exporter{
-			Bucket:          src.Bucket,
-			Region:          src.Region,
-			Key:             reportObjectName(src.Key, ua.Name),
-			AccessKeyID:     string(secretData["AWS_ACCESS_KEY_ID"]),
-			SecretAccessKey: string(secretData["AWS_SECRET_ACCESS_KEY"]),
-		}, nil
-	case miropsv1.SourceTypeBlob:
-		return &exporter.BlobExporter{
-			AccountName:   src.AccountName,
-			ContainerName: src.ContainerName,
-			BlobName:      reportObjectName(src.BlobName, ua.Name),
-			ClientID:      string(secretData["AZURE_CLIENT_ID"]),
-			ClientSecret:  string(secretData["AZURE_CLIENT_SECRET"]),
-			TenantID:      string(secretData["AZURE_TENANT_ID"]),
-		}, nil
-	case miropsv1.SourceTypePVC:
-		// A PVC destination is a filesystem write to a volume the Helm chart mounts. src.Path is
-		// the mount directory; the report lands as <name>.mirops so multiple analyses don't collide
-		// and reports stay distinct from any config files sharing the volume.
-		dir := src.Path
-		if dir == "" {
-			dir = "/mnt/mirops-reports"
-		}
-		return exporter.NewFileExporter(filepath.Join(dir, reportObjectName("", ua.Name))), nil
-	default:
-		return exporter.NewFileExporter(src.Path), nil
-	}
 }

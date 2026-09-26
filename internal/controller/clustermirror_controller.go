@@ -18,9 +18,7 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -35,17 +33,13 @@ import (
 	miropsv1 "github.com/miropshq/mirops/api/v1"
 	"github.com/miropshq/mirops/internal/analysis"
 	"github.com/miropshq/mirops/internal/collector"
+	"github.com/miropshq/mirops/internal/exporter"
 	"github.com/miropshq/mirops/internal/graph"
 )
 
 // defaultMirrorInterval is the rebuild cadence used when spec.refresh.interval is unset or
 // non-positive. The CRD also defaults it to 5m at admission; this guards direct/API creation.
 const defaultMirrorInterval = 5 * time.Minute
-
-// mirrorReportExt names the mirror report on the reports server (GET /reports/<name>.mirror). It
-// differs from the UpgradeAnalysis ".mirops" extension so a mirror and an analysis that share a name
-// never overwrite each other.
-const mirrorReportExt = ".mirror"
 
 // ClusterMirrorReconciler keeps the long-lived cluster mirror up to date. Unlike
 // UpgradeAnalysisReconciler it carries no target version and runs no compatibility check or AI:
@@ -56,6 +50,9 @@ type ClusterMirrorReconciler struct {
 	Scheme     *runtime.Scheme
 	Collector  collector.ClusterCollector
 	ReportsDir string
+	// OperatorNamespace is where the operator runs (POD_NAMESPACE): a remote destination's
+	// credentialsSecret is read from here, as for an UpgradeAnalysis.
+	OperatorNamespace string
 	// UpgradeEnabled mirrors MIROPS_UPGRADE_ENABLED (Helm upgrade.enabled). The mirror report
 	// carries it, so consumers learn upgrade analysis is off without a missing report to guess from.
 	UpgradeEnabled bool
@@ -131,10 +128,18 @@ func (r *ClusterMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	cm.Status.SyncError = ""
 	cm.Status.ObservedGeneration = cm.Generation
 
-	path := filepath.Join(r.ReportsDir, cm.Name+mirrorReportExt)
-	if err := writeMirrorReport(path, report); err != nil {
-		log.Error(err, "failed to write mirror report", "path", path)
+	// A report that can't be written is recorded on the status (reportState/reportError, and syncError
+	// for the UI) so a destination failure surfaces instead of hiding in the pod logs.
+	location, err := r.publishReport(ctx, cm, report)
+	cm.Status.ReportLocation = location
+	if err != nil {
+		log.Error(err, "failed to write mirror report", "location", location)
+		cm.Status.ReportState = reportStateFailed
+		cm.Status.ReportError = err.Error()
 		cm.Status.SyncError = fmt.Sprintf("mirror rebuilt but its report could not be written: %v", err)
+	} else {
+		cm.Status.ReportState = reportStateWritten
+		cm.Status.ReportError = ""
 	}
 
 	if err := r.Client.Status().Update(ctx, cm); err != nil {
@@ -175,7 +180,13 @@ func (r *ClusterMirrorReconciler) upgradeSummary(ctx context.Context) analysis.M
 			TargetVersion: ua.Spec.TargetVersion,
 			Decision:      ua.Status.Decision,
 			Score:         ua.Status.TotalScore,
-			Report:        reportFileName(ua),
+			Report:        localReportName(ua.Name, ua.Spec.Source, reportExt),
+		}
+		// Object storage is readable from outside the cluster, so its location lets a pipeline that
+		// reads the mirror from a bucket find the analysis even in another bucket. Pod-local
+		// destinations (file, pvc) are only reachable through the reports server, by Report.
+		if t := ua.Spec.Source.Type; t == miropsv1.SourceTypeS3 || t == miropsv1.SourceTypeBlob {
+			s.Location = ua.Status.ReportLocation
 		}
 		if ua.Status.LastAnalysisTime != nil {
 			s.LastAnalysisTime = ua.Status.LastAnalysisTime.UTC().Format(time.RFC3339)
@@ -185,21 +196,21 @@ func (r *ClusterMirrorReconciler) upgradeSummary(ctx context.Context) analysis.M
 	return out
 }
 
-// writeMirrorReport writes the report through a temp file and a rename, so the reports server (which
-// Headlamp polls) never serves a half-written file.
-func writeMirrorReport(path string, report *analysis.MirrorReport) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling mirror report: %w", err)
+// publishReport writes the mirror report to spec.source, exactly like an UpgradeAnalysis report: the
+// default (file) goes to the local reports dir the reports server serves; a remote destination
+// (s3/blob/pvc) is written only there, and the reports server reads it back on demand.
+func (r *ClusterMirrorReconciler) publishReport(ctx context.Context, cm *miropsv1.ClusterMirror, report *analysis.MirrorReport) (string, error) {
+	var exp exporter.Exporter
+	if isRemote(cm.Spec.Source) {
+		e, err := buildExporter(ctx, r.Client, r.OperatorNamespace, cm.Name, cm.Spec.Source, mirrorReportExt)
+		if err != nil {
+			return "", err
+		}
+		exp = e
+	} else {
+		exp = exporter.NewFileExporter(filepath.Join(r.ReportsDir, localReportName(cm.Name, cm.Spec.Source, mirrorReportExt)))
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("writing mirror report: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("publishing mirror report: %w", err)
-	}
-	return nil
+	return exp.Location(), exporter.Export(exp, report)
 }
 
 // SetupWithManager sets up the controller with the Manager.

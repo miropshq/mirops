@@ -57,6 +57,11 @@ type UpgradeAnalysisSummary struct {
 	LastAnalysisTime string `json:"lastAnalysisTime,omitempty"`
 	// Report is the analysis report's name on the reports server: GET /reports/<report>.
 	Report string `json:"report"`
+	// Location is where the analysis report was exported when its destination is object storage
+	// (s3://…, or the blob URL), so a consumer reading the mirror straight from a bucket can find the
+	// analysis even when it lives elsewhere. Empty for pod-local destinations (file, pvc), which are
+	// only reachable through the reports server.
+	Location string `json:"location,omitempty"`
 }
 
 // MirrorSummary is the mirror's headline numbers.

@@ -60,6 +60,13 @@ type ClusterMirrorSpec struct {
 	// refresh controls how often the mirror is rebuilt.
 	// +optional
 	Refresh RefreshConfig `json:"refresh,omitempty"`
+
+	// source is where the mirror's report (<name>.mirror) is written on every rebuild — the same
+	// destinations as an UpgradeAnalysis: file (default, the operator's reports dir), s3, blob or pvc.
+	// Remote destinations keep no copy in the pod; the reports server reads them back on demand, and a
+	// pipeline can read the report straight from the bucket.
+	// +optional
+	Source SourceConfig `json:"source,omitempty"`
 }
 
 // NamespaceMirrorStatus is the per-namespace risk summary published on the mirror status.
@@ -105,10 +112,24 @@ type ClusterMirrorStatus struct {
 	// +optional
 	ByNamespace []NamespaceMirrorStatus `json:"byNamespace,omitempty"`
 
-	// syncError holds the error message when the last rebuild failed (e.g. a collector error).
-	// Empty on success.
+	// syncError holds the error message when the last rebuild failed (e.g. a collector error), or when
+	// the rebuild succeeded but its report couldn't be written. Empty on success.
 	// +optional
 	SyncError string `json:"syncError,omitempty"`
+
+	// reportLocation is where the last report was written: a local path, or an s3://, blob or pvc URI.
+	// +optional
+	ReportLocation string `json:"reportLocation,omitempty"`
+
+	// reportState is the outcome of writing the last report: "written" or "failed".
+	// +optional
+	// +kubebuilder:validation:Enum=written;failed
+	ReportState string `json:"reportState,omitempty"`
+
+	// reportError is the error message when the report could not be written to its destination —
+	// e.g. an S3/Blob/PVC failure. Empty on success.
+	// +optional
+	ReportError string `json:"reportError,omitempty"`
 
 	// observedGeneration is the spec generation the last rebuild ran against. A spec change
 	// forces an immediate rebuild even within the refresh interval.
