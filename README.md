@@ -109,8 +109,8 @@ The operator produces the reports (`<name>.mirror`, `<name>.mirops`); these open
 |------|------------|------|
 | **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the reports. |
 | **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan` — reads the mirror report, shows namespaces' state, and **gates a CI/CD pipeline** on the upgrade verdict. |
-| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) | The Cluster Mirror page (namespace risk, at-risk components, dependency graph) and the upgrade analyses. |
-| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) | Deploys the operator + RBAC + reports service. |
+| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) · [Artifact Hub](https://artifacthub.io/packages/headlamp/mirops/mirops) | The Cluster Mirror page (namespace risk, at-risk components, dependency graph) and the upgrade analyses. |
+| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) · [Artifact Hub](https://artifacthub.io/packages/helm/mirops-operator/mirops) | Deploys the operator + RBAC + reports service. |
 
 ---
 
