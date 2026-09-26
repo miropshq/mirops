@@ -36,6 +36,7 @@ import (
 	discoveryclient "k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -171,6 +172,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Bootstrap the default ClusterMirror so the mirror is always on without a hand-applied CR. The
+	// Helm chart sets MIROPS_DEFAULT_MIRROR (name) and MIROPS_DEFAULT_MIRROR_SPEC (JSON); unset skips
+	// it. The chart can't ship the CR itself because the CRD only exists once this binary installs it.
+	if name := os.Getenv("MIROPS_DEFAULT_MIRROR"); name != "" {
+		bootstrap, err := client.New(cfg, client.Options{Scheme: scheme})
+		if err != nil {
+			setupLog.Error(err, "unable to create client for the default ClusterMirror")
+			os.Exit(1)
+		}
+		if err := controller.EnsureDefaultClusterMirror(context.Background(), bootstrap, name,
+			os.Getenv("MIROPS_DEFAULT_MIRROR_SPEC")); err != nil {
+			setupLog.Error(err, "unable to create the default ClusterMirror", "name", name)
+			os.Exit(1)
+		}
+		setupLog.Info("default ClusterMirror ensured", "name", name)
+	}
+
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -224,14 +242,36 @@ func main() {
 		}
 	}()
 
-	if err := (&controller.UpgradeAnalysisReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		Collector:         clusterCollector,
-		ReportsDir:        reportsDir,
-		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+	// UpgradeAnalysis is the opt-in upgrade-readiness mode: it is only registered when
+	// MIROPS_UPGRADE_ENABLED=true (Helm: upgrade.enabled). The always-on ClusterMirror below runs
+	// regardless, and publishes this same flag in its report.
+	upgradeEnabled := os.Getenv("MIROPS_UPGRADE_ENABLED") == "true"
+	if upgradeEnabled {
+		if err := (&controller.UpgradeAnalysisReconciler{
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Collector:         clusterCollector,
+			ReportsDir:        reportsDir,
+			OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("UpgradeAnalysis controller disabled; set MIROPS_UPGRADE_ENABLED=true to enable it")
+	}
+
+	// ClusterMirror is the always-on logical mirror of the cluster: it rebuilds the component graph on
+	// an interval, publishes the current operational risk on its status, and serves its report at
+	// /reports/<name>.mirror.
+	if err := (&controller.ClusterMirrorReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Collector:      clusterCollector,
+		ReportsDir:     reportsDir,
+		UpgradeEnabled: upgradeEnabled,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterMirror")
 		os.Exit(1)
 	}
 

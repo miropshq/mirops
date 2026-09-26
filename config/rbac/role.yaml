@@ -67,6 +67,7 @@ rules:
 - apiGroups:
   - mirops.mirops.io
   resources:
+  - clustermirrors
   - remediationplans
   - upgradeanalyses
   verbs:
@@ -80,17 +81,19 @@ rules:
 - apiGroups:
   - mirops.mirops.io
   resources:
+  - clustermirrors/finalizers
+  - upgradeanalyses/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - mirops.mirops.io
+  resources:
+  - clustermirrors/status
   - remediationplans/status
   - upgradeanalyses/status
   verbs:
   - get
   - patch
-  - update
-- apiGroups:
-  - mirops.mirops.io
-  resources:
-  - upgradeanalyses/finalizers
-  verbs:
   - update
 - apiGroups:
   - networking.k8s.io

@@ -1,0 +1,225 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: clustermirrors.mirops.mirops.io
+spec:
+  group: mirops.mirops.io
+  names:
+    kind: ClusterMirror
+    listKind: ClusterMirrorList
+    plural: clustermirrors
+    singular: clustermirror
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.components
+      name: Components
+      type: integer
+    - jsonPath: .status.edges
+      name: Edges
+      type: integer
+    - jsonPath: .status.atRisk
+      name: At Risk
+      type: integer
+    - jsonPath: .status.lastSync
+      name: Last Sync
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterMirror is the Schema for the clustermirrors API. It is the always-on logical mirror
+          of the cluster (component graph + per-namespace risk), rebuilt on an interval.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ClusterMirror
+            properties:
+              refresh:
+                description: refresh controls how often the mirror is rebuilt.
+                properties:
+                  interval:
+                    default: 5m
+                    description: interval is how often to rebuild the mirror when
+                      mode is "interval" (e.g. "5m", "1h").
+                    type: string
+                  mode:
+                    default: interval
+                    description: |-
+                      mode is how the mirror refreshes. Only "interval" is supported today (a full rebuild
+                      every interval). Watch-based refresh will be added later without breaking this field.
+                    enum:
+                    - interval
+                    type: string
+                type: object
+              scope:
+                description: |-
+                  scope controls which namespaces are included in the mirror. Reuses the same scoping as
+                  UpgradeAnalysis. Defaults to "all" (system + application namespaces).
+                properties:
+                  excludeNamespaces:
+                    description: excludeNamespaces is an optional list of additional
+                      namespaces to skip.
+                    items:
+                      type: string
+                    type: array
+                  mode:
+                    default: all
+                    description: |-
+                      mode controls which namespaces are included.
+                      "all" includes system and application namespaces (default).
+                      "application" excludes kube-system and other system namespaces.
+                    enum:
+                    - all
+                    - application
+                    type: string
+                required:
+                - mode
+                type: object
+            type: object
+          status:
+            description: status defines the observed state of ClusterMirror
+            properties:
+              atRisk:
+                description: |-
+                  atRisk is the number of components across the cluster with risk at or above the
+                  engine's at-risk threshold.
+                type: integer
+              byNamespace:
+                description: byNamespace is the per-namespace risk summary.
+                items:
+                  description: |-
+                    NamespaceMirrorStatus is the per-namespace risk summary published on the mirror status.
+                    It mirrors internal/graph.NamespaceRisk so the CR status matches the engine's aggregation.
+                  properties:
+                    atRisk:
+                      description: |-
+                        atRisk is the number of components in the namespace with risk at or above the engine's
+                        at-risk threshold.
+                      type: integer
+                    maxRisk:
+                      description: maxRisk is the highest component risk in the namespace
+                        (0..100).
+                      type: integer
+                    namespace:
+                      description: namespace is the namespace this summary is for.
+                      type: string
+                  required:
+                  - atRisk
+                  - maxRisk
+                  - namespace
+                  type: object
+                type: array
+              components:
+                description: components is the number of nodes in the mirror graph.
+                type: integer
+              conditions:
+                description: conditions represent the current state of the ClusterMirror
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              edges:
+                description: edges is the number of dependency edges in the mirror
+                  graph.
+                type: integer
+              lastSync:
+                description: lastSync is when the mirror was last rebuilt.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: |-
+                  observedGeneration is the spec generation the last rebuild ran against. A spec change
+                  forces an immediate rebuild even within the refresh interval.
+                format: int64
+                type: integer
+              syncError:
+                description: |-
+                  syncError holds the error message when the last rebuild failed (e.g. a collector error).
+                  Empty on success.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
