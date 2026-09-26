@@ -180,6 +180,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	report.Addons = addonResults
 	report.Graph = g
 	report.Risk = &analysis.RiskBreakdown{ByNamespace: nsRisk}
+	report.UpgradeImpact = upgradeImpact(addonResults, g)
 
 	ua.Status.AddonsChecked = len(addonResults)
 	ua.Status.IncompatibleAddons = incompatible
@@ -288,6 +289,24 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: interval}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// upgradeImpact is the upgrade's own blast radius: for each add-on the target version breaks, every
+// component that depends on it. The cluster's current-state risk is the ClusterMirror's job.
+func upgradeImpact(addons []compat.AddonCompatibility, g *graph.Graph) []analysis.AddonImpact {
+	out := make([]analysis.AddonImpact, 0, len(addons))
+	for _, a := range addons {
+		if a.Status != "incompatible" {
+			continue
+		}
+		out = append(out, analysis.AddonImpact{
+			Addon:           a.Name,
+			Version:         a.Version,
+			RequiredVersion: a.RequiredVersion,
+			Affected:        g.Dependents(graph.AddonID(a.Name)),
+		})
+	}
+	return out
 }
 
 // majorMinor parses major and minor from a version string like "v1.30.1" or "1.30".
