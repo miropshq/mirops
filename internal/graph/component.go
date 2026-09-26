@@ -50,6 +50,11 @@ type Graph struct {
 	Edges []Edge      `json:"edges"`
 }
 
+// AddonID is the graph id of a detected add-on (add-ons are one logical node, namespace-free).
+func AddonID(name string) string {
+	return id("Addon", "", name)
+}
+
 // id builds a stable component id. Cluster-scoped components pass an empty namespace.
 func id(kind, namespace, name string) string {
 	if namespace == "" {

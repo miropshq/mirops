@@ -224,14 +224,37 @@ func main() {
 		}
 	}()
 
-	if err := (&controller.UpgradeAnalysisReconciler{
+	// UpgradeAnalysis is the opt-in upgrade-readiness mode: it is only registered when
+	// MIROPS_UPGRADE_ENABLED=true (Helm: upgrade.enabled). The always-on ClusterMirror below runs
+	// regardless, and publishes this same flag in its report.
+	upgradeEnabled := os.Getenv("MIROPS_UPGRADE_ENABLED") == "true"
+	if upgradeEnabled {
+		if err := (&controller.UpgradeAnalysisReconciler{
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Collector:         clusterCollector,
+			ReportsDir:        reportsDir,
+			OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("UpgradeAnalysis controller disabled; set MIROPS_UPGRADE_ENABLED=true to enable it")
+	}
+
+	// ClusterMirror is the always-on logical mirror of the cluster: it rebuilds the component graph on
+	// an interval, publishes the current operational risk on its status, and serves its report at
+	// /reports/<name>.mirror.
+	if err := (&controller.ClusterMirrorReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		Collector:         clusterCollector,
 		ReportsDir:        reportsDir,
 		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+		UpgradeEnabled:    upgradeEnabled,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UpgradeAnalysis")
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterMirror")
 		os.Exit(1)
 	}
 

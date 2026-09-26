@@ -7,10 +7,15 @@
 > and decide before you act.
 
 **mirops is open source (Apache-2.0).** This repository is the **Kubernetes operator** — the first
-implementation of the mirror-operations concept. It builds a logical mirror of a Kubernetes cluster
-(a component graph + dependency risk + add-on compatibility) and uses it to evaluate **how ready the
-cluster is for a version upgrade**, optionally letting an AI reason over the mirror. The output is a
-JSON report (`<name>.mirops`) and a decision: `SAFE`, `WARNING`, or `CRITICAL`.
+implementation of the mirror-operations concept. It runs two kinds of operation on a logical mirror of
+the cluster (a component graph + dependency risk):
+
+- **ClusterMirror** — always on. Rebuilds the mirror on an interval and publishes the cluster's
+  **current** risk per namespace: what is down, pending or lost, and everything that depends on it.
+  Report: `<name>.mirror`.
+- **UpgradeAnalysis** — opt-in (Helm `upgrade.enabled=true`). Evaluates **how ready the cluster is for
+  a version upgrade** — add-on compatibility, removed APIs, drain blockers — optionally letting an AI
+  reason over the mirror. Report: `<name>.mirops`, with a decision: `SAFE`, `WARNING`, or `CRITICAL`.
 
 ---
 
@@ -48,6 +53,25 @@ The mirror engine (`internal/graph`) is intentionally **infra-agnostic** — onl
 
 ## What this operator does
 
+One operator pod runs both controllers. The ClusterMirror controller always runs; the UpgradeAnalysis
+controller only when the chart sets `upgrade.enabled=true` (env `MIROPS_UPGRADE_ENABLED`). Neither
+resource is created for you — you create a ClusterMirror after installing, like an UpgradeAnalysis.
+
+```mermaid
+flowchart LR
+    A["Live cluster"] -->|collector, every refresh.interval| M["ClusterMirror<br/>graph + current risk"]
+    M --> R1["name.mirror<br/>file / s3 / blob / pvc"]
+    M --> S1["ClusterMirror .status<br/>(components, atRisk, byNamespace)"]
+    A -->|collector + targetVersion| U["UpgradeAnalysis<br/>(opt-in)"]
+    U --> R2["name.mirops<br/>file / s3 / blob / pvc"]
+    R1 --> C["mirops-cli · Headlamp plugin"]
+    R2 --> C
+```
+
+The mirror report also indexes every UpgradeAnalysis (name, target version, decision, where its report
+is) and says whether upgrade analysis is on, so a consumer learns both from the one report that always
+exists. The rest of this section is the UpgradeAnalysis pipeline:
+
 ```mermaid
 flowchart TD
     A["Live cluster"] -->|collector| B["ClusterSnapshot"]
@@ -79,14 +103,14 @@ flowchart TD
 
 ## The mirops ecosystem
 
-The operator produces the report (`<name>.mirops`); these open-source tools consume it. Each lives in its own repo.
+The operator produces the reports (`<name>.mirror`, `<name>.mirops`); these open-source tools consume them. Each lives in its own repo.
 
 | Tool | Repository | Role |
 |------|------------|------|
-| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the report. |
-| **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan --source … --enforce` — renders the report and **gates a CI/CD pipeline**. |
-| **Headlamp plugin** | [github.com/miropshq/mirops-ui](https://github.com/miropshq/mirops-ui) | Visualizes the dependency graph, decision, add-on compatibility, and per-namespace risk. |
-| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) | Deploys the operator + RBAC + reports service. |
+| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the reports. |
+| **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan` — reads the mirror report, shows namespaces' state, and **gates a CI/CD pipeline** on the upgrade verdict. |
+| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) · [Artifact Hub](https://artifacthub.io/packages/headlamp/mirops/mirops) | The Cluster Mirror page (namespace risk, at-risk components, dependency graph) and the upgrade analyses. |
+| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) · [Artifact Hub](https://artifacthub.io/packages/helm/mirops-operator/mirops) | Deploys the operator + RBAC + reports service. |
 
 ---
 
@@ -370,6 +394,7 @@ Each operator release **embeds** a specific published matrix snapshot:
 | Operator version | Embedded matrix |
 |------------------|-----------------|
 | `0.1.0` | `v2026.09.03` |
+| `0.2.0` | `v2026.09.03` |
 
 **Updating the matrix without a new operator image.** The embedded snapshot is deterministic and
 offline-safe, but you can decouple the matrix from the operator build: the Helm chart's
@@ -390,26 +415,65 @@ stays reproducible; leave it disabled for air-gapped clusters.
 
 ### Install with Helm
 
-The CRDs are **cluster-scoped** and ship as a build artifact (not bundled in the chart). Apply the
-CRDs first, then install the chart from the [helm-charts](https://github.com/miropshq/helm-charts) repo:
+The operator **installs its own CRDs** at startup (embedded in the image), so the chart from the
+[helm-charts](https://github.com/miropshq/helm-charts) repo is all you need:
 
 ```sh
-# 1. CRDs (cluster-scoped: UpgradeAnalysis, RemediationPlan)
-kubectl apply -f config/crd/bases/
+# Operator (controller-manager + remediation-manager); upgrade analysis stays off
+helm install mirops oci://ghcr.io/miropshq/charts/mirops \
+  --namespace mirops --create-namespace --version 0.2.0
 
-# 2. Operator (controller-manager + remediation-manager)
-helm install mirops ./mirops-operator --namespace mirops --create-namespace
+# ...or with upgrade analysis on
+helm install mirops oci://ghcr.io/miropshq/charts/mirops \
+  --namespace mirops --create-namespace --version 0.2.0 \
+  --set upgrade.enabled=true
 ```
 
 > Images: `ghcr.io/miropshq/mirops/operator` and `ghcr.io/miropshq/mirops/remediation`.
-> The chart sets `POD_NAMESPACE` so the operator reads its AI Secret and compatibility-matrix
-> ConfigMap from its own namespace (the CRDs are cluster-scoped, so the CR has no namespace).
+> The chart sets `POD_NAMESPACE` so the operator reads its AI Secret, compatibility-matrix ConfigMap
+> and storage credentials from its own namespace (the CRDs are cluster-scoped, so the CRs have no
+> namespace). The chart creates no ClusterMirror or UpgradeAnalysis — see [Usage](#usage).
 
 ---
 
 ## Usage
 
-`UpgradeAnalysis` is **cluster-scoped** — it analyses the whole cluster, so it has no namespace:
+### 1. Create your ClusterMirror
+
+Nothing is mirrored until you create one. Both CRs are **cluster-scoped**, so they have no namespace.
+Name it `default` — the Headlamp plugin opens that one first when there are several:
+
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: ClusterMirror
+metadata:
+  name: default
+spec:
+  scope:
+    mode: all                       # all (default) | application (exclude system namespaces)
+  refresh:
+    interval: 5m                    # how often the mirror is rebuilt (default 5m)
+```
+
+```sh
+kubectl apply -f mirror.yaml
+kubectl get clustermirror
+# NAME      COMPONENTS   EDGES   AT RISK   LAST SYNC   AGE
+# default   184          297     3         30s         1h
+kubectl get clustermirror default -o jsonpath='{.status.byNamespace}'
+```
+
+Rebuild it now, without waiting for the interval, with the `mirops.io/refresh` annotation (the Headlamp
+**Refresh now** button does the same):
+
+```sh
+kubectl annotate clustermirror default mirops.io/refresh="$(date +%s)" --overwrite
+```
+
+### 2. Analyse an upgrade (opt-in)
+
+Upgrade analysis needs `upgrade.enabled=true` in the chart; with it off, an UpgradeAnalysis is never
+processed. `UpgradeAnalysis` is **cluster-scoped** too — it analyses the whole cluster:
 
 ```yaml
 apiVersion: mirops.mirops.io/v1
@@ -438,19 +502,29 @@ kubectl describe upgradeanalysis to-1-34     # decision, score, reason, blockers
 
 Re-run an analysis on demand by bumping the spec or adding the `mirops.io/refresh` annotation.
 
-Gate a CI/CD pipeline with the [CLI](https://github.com/miropshq/mirops-cli):
+### 3. Read it from a pipeline
+
+The [CLI](https://github.com/miropshq/mirops-cli) reads the mirror report, and the upgrade report when
+the upgrade check is on:
 
 ```sh
-mirops scan --source http://<reports-service>:8084/reports/to-1-34.mirops --enforce
-# exits non-zero when decision.allow == false (CRITICAL)
+export MIROPS_SOURCE=s3://my-reports/prod/default.mirror
+mirops scan -n payments                       # a namespace's current state (never blocks)
+
+MIROPS_UPGRADE=true \
+MIROPS_UPGRADE_SOURCE=s3://my-reports/prod/to-1-34.mirops \
+mirops scan --enforce                         # exit 1 when decision.allow == false (CRITICAL)
 ```
 
 ---
 
 ## Report destinations
 
-`spec.source.type` selects where the report is written. The default (`file`) is written to the pod
-and served over HTTP (`:8084`). A **remote** destination (`s3` / `blob` / `pvc`) keeps **no local
+`spec.source.type` selects where the report is written — the same block, with the same fields, on a
+`ClusterMirror` and on an `UpgradeAnalysis`. The mirror rewrites its report on every rebuild, so the
+same URL always holds the latest one. The default (`file`) is written to the pod and served over HTTP
+(`:8084`) — lost when the pod restarts, and missing for a few seconds on a leader change until the
+first rebuild; use a remote destination for a report a pipeline reads. A **remote** destination (`s3` / `blob` / `pvc`) keeps **no local
 replica in the pod** — the operator writes only to the destination and **reads the report back on
 demand** (in memory) to serve it, using its own credentials so the connection never leaves the
 operator (e.g. IRSA for S3, inside AWS).
@@ -460,30 +534,69 @@ operator (e.g. IRSA for S3, inside AWS).
 | `file` | Local file in the pod (default; ephemeral `emptyDir`), served over HTTP | `path` |
 | `s3` | Amazon S3 — no local replica | `bucket`, `region`, `key`, `credentialsSecret` |
 | `blob` | Azure Blob Storage — no local replica | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
-| `pvc` | PersistentVolumeClaim — in-cluster **persistent** storage (like `file`, but survives pod restarts; no cloud) | `path` (mount dir; report written as `<name>.mirops`) |
+| `pvc` | PersistentVolumeClaim — in-cluster **persistent** storage (like `file`, but survives pod restarts; no cloud) | `path` (mount dir; report written as `<name>.mirror` / `<name>.mirops`) |
 
 `credentialsSecret` is **optional** — leave it empty to use **IRSA** (S3) or **Workload / Managed
 Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
 The `pvc` volume is mounted by the Helm chart (`reportPVC.enabled=true`).
 
-**Report naming.** Every destination uses the **`.mirops`** extension (the content is JSON, uploaded as
-`application/json`). For `s3`/`blob`, the object is named exactly as you set `key`/`blobName` — you own
-the name; leave it empty to default to `<analysis-name>.mirops`. For `pvc` and the local `file`
-destination (served over HTTP), the report is `<analysis-name>.mirops`. The `.mirops` convention keeps
-reports distinct from config files sharing the destination (filter them with `*.mirops`).
+**Report naming.** The extension says which report it is: **`.mirror`** for a ClusterMirror,
+**`.mirops`** for an UpgradeAnalysis (the content is JSON, uploaded as `application/json`, and carries a
+top-level `kind`). For `s3`/`blob`, the object is named exactly as you set `key`/`blobName` — you own
+the name; leave it empty to default to `<name>.mirror` / `<name>.mirops`. For `pvc` and the local
+`file` destination (served over HTTP), the report is always `<name>.mirror` / `<name>.mirops`. The
+extensions keep reports distinct from config files sharing the destination.
 
 **Failures are surfaced, not hidden.** When the operator can't write to (or read back from) a remote
 destination, it records the outcome on the CR — `status.reportState` (`written` / `failed`),
 `status.reportError` (the message), and `status.reportLocation` — so a storage failure shows in
-`kubectl describe` and the UI instead of only the pod logs. Deleting the CR **never** deletes the
-report from S3/Blob/PVC — there is no cleanup finalizer.
+`kubectl describe` and the UI instead of only the pod logs (a ClusterMirror also sets
+`status.syncError`). Deleting the CR **never** deletes the report from S3/Blob/PVC — there is no
+cleanup finalizer.
 
 ---
 
 ## Custom resources reference
 
-Two cluster-scoped CRDs. You author `UpgradeAnalysis`; the operator creates `RemediationPlan` from it.
-Everything below works with plain `kubectl` — Headlamp is optional.
+Three cluster-scoped CRDs. You author `ClusterMirror` and `UpgradeAnalysis`; the operator creates
+`RemediationPlan` from an analysis. Everything below works with plain `kubectl` — Headlamp is optional.
+
+### ClusterMirror (input)
+
+```yaml
+apiVersion: mirops.mirops.io/v1
+kind: ClusterMirror
+metadata:
+  name: default                     # cluster-scoped — no namespace
+spec:
+  scope:
+    mode: all                       # all (default) | application (skip system namespaces)
+    excludeNamespaces: []           # extra namespaces to skip
+  refresh:
+    mode: interval                  # the only mode today
+    interval: 5m                    # default 5m
+  source:                           # where <name>.mirror is written (see "Report destinations")
+    type: file                      # file (default) | s3 | blob | pvc
+```
+
+| Field | Type / values | Default | Notes |
+|-------|---------------|---------|-------|
+| `scope.mode` | `all` \| `application` | `all` | `application` excludes system namespaces. |
+| `scope.excludeNamespaces` | `[]string` | — | Extra namespaces to skip. |
+| `refresh.mode` | `interval` | `interval` | A full rebuild on a timer; the only mode today. |
+| `refresh.interval` | duration | `5m` | How often the mirror is rebuilt. A spec change rebuilds it at once. |
+| `source.*` | same as UpgradeAnalysis | `file` | Report destination; the default object name is `<name>.mirror`. |
+
+The operator writes **`status`** (read-only): `components`, `edges`, `atRisk`, `lastSync`,
+`byNamespace[]` (`namespace`, `maxRisk`, `atRisk`), `syncError`, and the report bookkeeping
+(`reportState`, `reportLocation`, `reportError`).
+
+The `<name>.mirror` report carries `kind: ClusterMirror`, `generatedAt`, `clusterVersion`, a `summary`,
+`atRisk` (each at-risk component with its dependents and where its risk comes from), `risk.byNamespace`,
+the detected `addons`, the `workloads` inventory, live `issues`, the full `graph`, and `upgrade`:
+whether upgrade analysis is on, plus one entry per UpgradeAnalysis (`name`, `targetVersion`,
+`decision`, `score`, `report`, and `location` for s3/blob). It holds only current state — everything
+tied to a target version stays in the upgrade report.
 
 ### UpgradeAnalysis (input)
 
@@ -560,6 +673,11 @@ spec:
 The operator writes the outcome to **`status`** (read-only): `decision` (`SAFE`/`WARNING`/`CRITICAL`),
 `totalScore`, `reason`, `conditions`, and — when AI ran — `aiScore` / `aiReasoning` / `aiModel`, plus
 report bookkeeping (`reportState`, `reportLocation`, `reportError`). Inspect with `kubectl describe`.
+
+The `<name>.mirops` report carries `kind: UpgradeAnalysis`, the `decision`, `scores`, add-on
+compatibility, and `upgradeImpact` — for each add-on the target version breaks, every component that
+depends on it. It still carries the `workloads`, `graph` and `risk` it had in 0.1.0, so older
+consumers keep working; for the cluster's current state, read the ClusterMirror report.
 
 #### Report destination variants
 

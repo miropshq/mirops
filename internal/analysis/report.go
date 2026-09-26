@@ -5,10 +5,19 @@ import (
 	"github.com/miropshq/mirops/internal/graph"
 )
 
+// Report kinds. Every report the operator writes carries one in its top-level "kind" field so a
+// consumer (mirops-cli, Headlamp) can tell which document it was handed. A report without a kind
+// predates v0.2.0 and is an UpgradeAnalysis report.
+const (
+	ReportKindUpgradeAnalysis = "UpgradeAnalysis"
+	ReportKindClusterMirror   = "ClusterMirror"
+)
+
 // Report is the full JSON output written to the source destination
 // and consumed by mirops-cli via --source flag.
 // Field order: identity → verdict → scores → conditions → metrics → workloads → issues (verbose last).
 type Report struct {
+	Kind           string          `json:"kind"`
 	GeneratedAt    string          `json:"generatedAt"`
 	Cluster        string          `json:"cluster"`
 	ClusterVersion string          `json:"clusterVersion"`
@@ -27,6 +36,19 @@ type Report struct {
 	Addons []compat.AddonCompatibility `json:"addons,omitempty"`
 	Graph  *graph.Graph                `json:"graph,omitempty"`
 	Risk   *RiskBreakdown              `json:"risk,omitempty"`
+
+	// UpgradeImpact is the upgrade's own blast radius: for each add-on incompatible with the target
+	// version, the components that depend on it. The cluster's current-state risk lives in the
+	// ClusterMirror report; this is only what the upgrade adds on top.
+	UpgradeImpact []AddonImpact `json:"upgradeImpact,omitempty"`
+}
+
+// AddonImpact is one incompatible add-on and everything that depends on it, directly or transitively.
+type AddonImpact struct {
+	Addon           string   `json:"addon"`
+	Version         string   `json:"version,omitempty"`
+	RequiredVersion string   `json:"requiredVersion,omitempty"`
+	Affected        []string `json:"affected,omitempty"`
 }
 
 // RiskBreakdown holds the engine's per-namespace risk aggregation. Per-component risk

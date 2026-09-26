@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -10,10 +9,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
-	"github.com/miropshq/mirops/internal/analysis"
 )
 
-// BlobExporter uploads the analysis report to an Azure Blob Storage container.
+// BlobExporter uploads a report to an Azure Blob Storage container.
 // Credentials are resolved in order:
 //  1. Service Principal from clientID/clientSecret/tenantID (fallback secret)
 //  2. Workload Identity / Managed Identity (automatic when empty)
@@ -44,12 +42,7 @@ func (e *BlobExporter) client() (*azblob.Client, error) {
 	return azblob.NewClient(url, cred, nil)
 }
 
-func (e *BlobExporter) Export(report *analysis.Report) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling report: %w", err)
-	}
-
+func (e *BlobExporter) Write(data []byte) error {
 	client, err := e.client()
 	if err != nil {
 		return err

@@ -3,7 +3,6 @@ package exporter
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/miropshq/mirops/internal/analysis"
 )
 
-// S3Exporter uploads the analysis report to an S3 bucket.
+// S3Exporter uploads a report to an S3 bucket.
 // Credentials are resolved in order:
 //  1. Static credentials from accessKeyID/secretAccessKey (fallback secret)
 //  2. IRSA / instance profile / environment variables (automatic when empty)
@@ -42,12 +40,7 @@ func (e *S3Exporter) loadConfig(ctx context.Context) (aws.Config, error) {
 	return awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(e.Region))
 }
 
-func (e *S3Exporter) Export(report *analysis.Report) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling report: %w", err)
-	}
-
+func (e *S3Exporter) Write(data []byte) error {
 	ctx := context.Background()
 	cfg, err := e.loadConfig(ctx)
 	if err != nil {

@@ -50,6 +50,7 @@ func Calculate(snap *collector.ClusterSnapshot, targetVersion, profileName strin
 	workloads := buildWorkloads(snap)
 
 	return &Report{
+		Kind:           ReportKindUpgradeAnalysis,
 		Cluster:        snap.ClusterName,
 		ClusterVersion: snap.ClusterVersion,
 		TargetVersion:  targetVersion,
@@ -187,18 +188,35 @@ func decide(total int, c Conditions, p ScoringProfile) (string, bool) {
 	return levelSafe, true
 }
 
+// buildIssues lists everything the upgrade report flags: the cluster's current problems (shared with
+// the mirror report) plus what only matters because of the upgrade — PDBs that would stall the
+// drain, running jobs the drain would interrupt, and APIs removed in the target version.
 func buildIssues(snap *collector.ClusterSnapshot) []string {
-	total := len(snap.PodIssues) + len(snap.NodeIssues) + len(snap.PDBIssues) +
-		len(snap.StatefulSetIssues) + len(snap.DaemonSetIssues) + len(snap.JobIssues) + len(snap.DeprecatedAPIList)
-	issues := make([]string, 0, total)
+	issues := stateIssues(snap)
+	for _, pdb := range snap.PDBIssues {
+		issues = append(issues, fmt.Sprintf("pdb %s/%s: would block drain", pdb.Namespace, pdb.Name))
+	}
+	for _, j := range snap.JobIssues {
+		if j.Status != jobStatusFailed {
+			issues = append(issues, fmt.Sprintf("job %s/%s: %d active pod(s) may be interrupted", j.Namespace, j.Name, j.Active))
+		}
+	}
+	for _, api := range snap.DeprecatedAPIList {
+		issues = append(issues, fmt.Sprintf("deprecated API %s (%s) removed in k8s %s", api.Resource, api.Version, api.RemovedIn))
+	}
+	return issues
+}
+
+// stateIssues lists the cluster's current problems — true whatever version comes next: crashing or
+// not-ready pods, unhealthy nodes, workloads short of replicas, failed jobs.
+func stateIssues(snap *collector.ClusterSnapshot) []string {
+	issues := make([]string, 0, len(snap.PodIssues)+len(snap.NodeIssues)+
+		len(snap.StatefulSetIssues)+len(snap.DaemonSetIssues)+len(snap.JobIssues))
 	for _, p := range snap.PodIssues {
 		issues = append(issues, fmt.Sprintf("pod %s/%s: %s (restarts: %d)", p.Namespace, p.Name, p.Reason, p.Restarts))
 	}
 	for _, n := range snap.NodeIssues {
 		issues = append(issues, fmt.Sprintf("node %s: %s", n.Name, n.Reason))
-	}
-	for _, pdb := range snap.PDBIssues {
-		issues = append(issues, fmt.Sprintf("pdb %s/%s: would block drain", pdb.Namespace, pdb.Name))
 	}
 	for _, ss := range snap.StatefulSetIssues {
 		issues = append(issues, fmt.Sprintf("statefulset %s/%s: %d/%d replicas ready", ss.Namespace, ss.Name, ss.ReadyReplicas, ss.TotalReplicas))
@@ -207,14 +225,9 @@ func buildIssues(snap *collector.ClusterSnapshot) []string {
 		issues = append(issues, fmt.Sprintf("daemonset %s/%s: %d pod(s) unavailable", ds.Namespace, ds.Name, ds.NumberUnavailable))
 	}
 	for _, j := range snap.JobIssues {
-		if j.Status == "Failed" {
+		if j.Status == jobStatusFailed {
 			issues = append(issues, fmt.Sprintf("job %s/%s: failed (%s)", j.Namespace, j.Name, j.Reason))
-		} else {
-			issues = append(issues, fmt.Sprintf("job %s/%s: %d active pod(s) may be interrupted", j.Namespace, j.Name, j.Active))
 		}
-	}
-	for _, api := range snap.DeprecatedAPIList {
-		issues = append(issues, fmt.Sprintf("deprecated API %s (%s) removed in k8s %s", api.Resource, api.Version, api.RemovedIn))
 	}
 	return issues
 }
@@ -258,7 +271,7 @@ func buildReason(level string, c Conditions, m Metrics, snap *collector.ClusterS
 	if len(snap.JobIssues) > 0 {
 		failed := 0
 		for _, job := range snap.JobIssues {
-			if job.Status == "Failed" {
+			if job.Status == jobStatusFailed {
 				failed++
 			}
 		}

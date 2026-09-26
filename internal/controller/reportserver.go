@@ -58,22 +58,45 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remote destination: look up the (cluster-scoped) UpgradeAnalysis and read the report back
-	// from s3/blob/pvc. The report file name is "<ua.Name>.mirops"; tolerate a legacy ".json"
-	// suffix so a client that hasn't been updated still resolves to the right analysis.
+	// Remote destination: find the (cluster-scoped) resource the report belongs to and read the report
+	// back from its spec.source (s3/blob/pvc). "<name>.mirror" is a ClusterMirror's; anything else is an
+	// UpgradeAnalysis's "<name>.mirops" — a legacy ".json" suffix is tolerated so a client that hasn't
+	// been updated still resolves to the right analysis.
 	ctx := r.Context()
 	log := logf.FromContext(ctx)
-	uaName := strings.TrimSuffix(strings.TrimSuffix(name, ".mirops"), ".json")
 
-	ua := &miropsv1.UpgradeAnalysis{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: uaName}, ua); err != nil {
-		http.Error(w, "report not found", http.StatusNotFound)
+	var (
+		crName string
+		src    miropsv1.SourceConfig
+		ext    string
+	)
+	if mirrorName, ok := strings.CutSuffix(name, mirrorReportExt); ok {
+		cm := &miropsv1.ClusterMirror{}
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: mirrorName}, cm); err != nil {
+			http.Error(w, "report not found", http.StatusNotFound)
+			return
+		}
+		crName, src, ext = cm.Name, cm.Spec.Source, mirrorReportExt
+	} else {
+		ua := &miropsv1.UpgradeAnalysis{}
+		uaName := strings.TrimSuffix(strings.TrimSuffix(name, reportExt), ".json")
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: uaName}, ua); err != nil {
+			http.Error(w, "report not found", http.StatusNotFound)
+			return
+		}
+		crName, src, ext = ua.Name, ua.Spec.Source, reportExt
+	}
+
+	// A file destination lives only on the local disk, already checked above: the report isn't written
+	// yet (e.g. the first rebuild after a restart). A plain 404 tells the poller to retry.
+	if !isRemote(src) {
+		http.Error(w, "report not available yet", http.StatusNotFound)
 		return
 	}
 
-	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, ua)
+	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src, ext)
 	if err != nil {
-		s.writeReadError(w, log, uaName, "", err)
+		s.writeReadError(w, log, crName, "", err)
 		return
 	}
 	data, err := exp.Read()
@@ -82,11 +105,11 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// while an analysis is in flight, so return a plain 404 (the UI keeps polling) and don't log
 		// it as a failure. Real connection/auth errors still surface as 502 + ERROR below.
 		if errors.Is(err, exporter.ErrNotFound) {
-			log.V(1).Info("report not written yet", "report", uaName, "location", exp.Location())
+			log.V(1).Info("report not written yet", "report", crName, "location", exp.Location())
 			http.Error(w, "report not available yet", http.StatusNotFound)
 			return
 		}
-		s.writeReadError(w, log, uaName, exp.Location(), err)
+		s.writeReadError(w, log, crName, exp.Location(), err)
 		return
 	}
 	writeJSONBytes(w, http.StatusOK, data)

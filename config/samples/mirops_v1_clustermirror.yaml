@@ -1,0 +1,11 @@
+apiVersion: mirops.mirops.io/v1
+kind: ClusterMirror
+metadata:
+  name: prod
+spec:
+  scope:
+    mode: application        # all | application
+    excludeNamespaces: []
+  refresh:
+    mode: interval           # only "interval" today
+    interval: 5m
