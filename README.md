@@ -380,10 +380,11 @@ actions are pod- and node-level only — remediation does not upgrade add-ons, e
 
 The compatibility engine (`internal/compat`) ships a vendor-verified matrix (`internal/compat/matrix.yaml`,
 embedded at build time) and accepts a ConfigMap override (`mirops-compatibility-matrix` in the
-operator namespace). It currently covers ten common add-ons:
+operator namespace). It currently covers 18 common add-ons, with rules up to Kubernetes 1.36:
 
-**Istio, cert-manager, ingress-nginx, Argo CD, Prometheus, external-dns, metrics-server,
-cluster-autoscaler, Calico, Cilium** — across Kubernetes 1.24 – 1.35.
+**Istio, cert-manager, ingress-nginx, Traefik, Argo CD, Flux, Prometheus, external-dns,
+metrics-server, cluster-autoscaler, Karpenter, AWS Load Balancer Controller, KEDA, Kyverno,
+Gatekeeper, Calico, Cilium, Longhorn**.
 
 For an incompatible add-on it computes the version you'd need to upgrade *to* (inverse lookup) and
 surfaces it in `decision.blockers` (`incompatible add-on: istio 1.20 (upgrade to 1.22)`). To extend
@@ -774,7 +775,7 @@ moves `pending-approval → running → completed | failed`.
 | Built against | Kubernetes `v0.34` libraries (`client-go`/`api` v0.34.1, `controller-runtime` v0.22.4) |
 | Runs on | Kubernetes **1.31 – 1.34** (recent clusters; older may work but is untested) |
 | Go | 1.24 |
-| Add-on compatibility matrix | covers target versions **1.24 – 1.35** |
+| Add-on compatibility matrix | 18 common add-ons, rules up to Kubernetes **1.36** |
 
 ---
 
