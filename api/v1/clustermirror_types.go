@@ -61,7 +61,7 @@ type ClusterMirrorSpec struct {
 	// +optional
 	Refresh RefreshConfig `json:"refresh,omitempty"`
 
-	// source is where the mirror's report (<name>.mirror) is written on every rebuild — the same
+	// source is where the mirror's report (<name>.mirops) is written on every rebuild — the same
 	// destinations as an UpgradeAnalysis: file (default, the operator's reports dir), s3, blob or pvc.
 	// Remote destinations keep no copy in the pod; the reports server reads them back on demand, and a
 	// pipeline can read the report straight from the bucket.

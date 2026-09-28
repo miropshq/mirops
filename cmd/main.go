@@ -245,7 +245,7 @@ func main() {
 
 	// ClusterMirror is the always-on logical mirror of the cluster: it rebuilds the component graph on
 	// an interval, publishes the current operational risk on its status, and serves its report at
-	// /reports/<name>.mirror.
+	// /reports/<name>.mirops?kind=ClusterMirror.
 	if err := (&controller.ClusterMirrorReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
