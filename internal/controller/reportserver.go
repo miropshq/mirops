@@ -55,16 +55,9 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	crName := strings.TrimSuffix(strings.TrimSuffix(name, reportExt), ".json")
 	mirror := strings.EqualFold(r.URL.Query().Get("kind"), "ClusterMirror")
 
-	// File destination: serve the local copy from disk if it's there.
-	if data, err := os.ReadFile(filepath.Join(s.ReportsDir, name)); err == nil {
-		writeJSONBytes(w, http.StatusOK, data)
-		return
-	}
-
-	// Remote destination: find the (cluster-scoped) resource the report belongs to and read the report
-	// back from its spec.source (s3/blob/pvc) — a ClusterMirror's or an UpgradeAnalysis's, as the request
-	// says. A ".json" suffix is tolerated so a client that hasn't been updated still resolves to
-	// the right analysis.
+	// Find the (cluster-scoped) resource the report belongs to — a ClusterMirror or an UpgradeAnalysis,
+	// as the request says — so a mirror and an analysis never answer for each other. A ".json" suffix is
+	// tolerated so a client that hasn't been updated still resolves to the right analysis.
 	ctx := r.Context()
 	log := logf.FromContext(ctx)
 
@@ -85,13 +78,19 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		src = ua.Spec.Source
 	}
 
-	// A file destination lives only on the local disk, already checked above: the report isn't written
-	// yet (e.g. the first rebuild after a restart). A plain 404 tells the poller to retry.
+	// File destination: the local copy on disk. Missing means it isn't written yet (e.g. the first
+	// rebuild after a restart); a plain 404 tells the poller to retry.
 	if !isRemote(src) {
-		http.Error(w, "report not available yet", http.StatusNotFound)
+		data, err := os.ReadFile(filepath.Join(s.ReportsDir, localReportName(crName, src, reportExt)))
+		if err != nil {
+			http.Error(w, "report not available yet", http.StatusNotFound)
+			return
+		}
+		writeJSONBytes(w, http.StatusOK, data)
 		return
 	}
 
+	// Remote destination (s3/blob/pvc): read the report back from its spec.source.
 	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src, reportExt)
 	if err != nil {
 		s.writeReadError(w, log, crName, "", err)
