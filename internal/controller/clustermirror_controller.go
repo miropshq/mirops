@@ -180,7 +180,7 @@ func (r *ClusterMirrorReconciler) upgradeSummary(ctx context.Context) analysis.M
 			TargetVersion: ua.Spec.TargetVersion,
 			Decision:      ua.Status.Decision,
 			Score:         ua.Status.TotalScore,
-			Report:        localReportName(ua.Name, ua.Spec.Source, reportExt),
+			Report:        localReportName(ua.Name, ua.Spec.Source),
 		}
 		// Object storage is readable from outside the cluster, so its location lets a pipeline that
 		// reads the mirror from a bucket find the analysis even in another bucket. Pod-local
@@ -202,13 +202,13 @@ func (r *ClusterMirrorReconciler) upgradeSummary(ctx context.Context) analysis.M
 func (r *ClusterMirrorReconciler) publishReport(ctx context.Context, cm *miropsv1.ClusterMirror, report *analysis.MirrorReport) (string, error) {
 	var exp exporter.Exporter
 	if isRemote(cm.Spec.Source) {
-		e, err := buildExporter(ctx, r.Client, r.OperatorNamespace, cm.Name, cm.Spec.Source, reportExt)
+		e, err := buildExporter(ctx, r.Client, r.OperatorNamespace, cm.Name, cm.Spec.Source)
 		if err != nil {
 			return "", err
 		}
 		exp = e
 	} else {
-		exp = exporter.NewFileExporter(filepath.Join(r.ReportsDir, localReportName(cm.Name, cm.Spec.Source, reportExt)))
+		exp = exporter.NewFileExporter(filepath.Join(r.ReportsDir, localReportName(cm.Name, cm.Spec.Source)))
 	}
 	return exp.Location(), exporter.Export(exp, report)
 }

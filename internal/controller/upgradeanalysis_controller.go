@@ -237,7 +237,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	switch t := ua.Spec.Source.Type; t {
 	case miropsv1.SourceTypeS3, miropsv1.SourceTypeBlob, miropsv1.SourceTypePVC:
 		ua.Status.ReportPath = ""
-		exp, err := buildExporter(ctx, r.Client, r.OperatorNamespace, ua.Name, ua.Spec.Source, reportExt)
+		exp, err := buildExporter(ctx, r.Client, r.OperatorNamespace, ua.Name, ua.Spec.Source)
 		if err != nil {
 			reportErr = err
 			ua.Status.ReportLocation = ""
@@ -250,7 +250,7 @@ func (r *UpgradeAnalysisReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 		}
 	default:
-		localPath := filepath.Join(r.ReportsDir, localReportName(ua.Name, ua.Spec.Source, reportExt))
+		localPath := filepath.Join(r.ReportsDir, localReportName(ua.Name, ua.Spec.Source))
 		if err := exporter.Export(exporter.NewFileExporter(localPath), report); err != nil {
 			reportErr = err
 		} else {

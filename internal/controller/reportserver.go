@@ -81,7 +81,7 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// File destination: the local copy on disk. Missing means it isn't written yet (e.g. the first
 	// rebuild after a restart); a plain 404 tells the poller to retry.
 	if !isRemote(src) {
-		data, err := os.ReadFile(filepath.Join(s.ReportsDir, localReportName(crName, src, reportExt)))
+		data, err := os.ReadFile(filepath.Join(s.ReportsDir, localReportName(crName, src)))
 		if err != nil {
 			http.Error(w, "report not available yet", http.StatusNotFound)
 			return
@@ -91,7 +91,7 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remote destination (s3/blob/pvc): read the report back from its spec.source.
-	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src, reportExt)
+	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src)
 	if err != nil {
 		s.writeReadError(w, log, crName, "", err)
 		return
