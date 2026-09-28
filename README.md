@@ -54,7 +54,8 @@ The mirror engine (`internal/graph`) is intentionally **infra-agnostic** — onl
 
 One operator pod runs both controllers. The ClusterMirror controller always runs; the UpgradeAnalysis
 controller only when the chart sets `upgrade.enabled=true` (env `MIROPS_UPGRADE_ENABLED`). Neither
-resource is created for you — you create a ClusterMirror after installing, like an UpgradeAnalysis.
+resource is created for you — you create a ClusterMirror after installing, like an UpgradeAnalysis:
+with `kubectl`, or from the Headlamp plugin (**Mirops → Cluster Mirror → New mirror**).
 
 ```mermaid
 flowchart LR
@@ -81,7 +82,7 @@ The operator produces the reports (`<name>.mirops`, for a ClusterMirror and an U
 |------|------------|------|
 | **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the reports. |
 | **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan` — reads the mirror report, shows namespaces' state, and **gates a CI/CD pipeline** on the upgrade verdict. |
-| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) · [Artifact Hub](https://artifacthub.io/packages/headlamp/mirops/mirops) | The Cluster Mirror page (namespace risk, at-risk components, dependency graph) and the upgrade analyses. |
+| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) · [Artifact Hub](https://artifacthub.io/packages/headlamp/mirops/mirops) | The list of mirrors and a form to create one; the Cluster Mirror page (namespace risk, at-risk components, dependency graph); and the upgrade analyses. |
 | **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) · [Artifact Hub](https://artifacthub.io/packages/helm/mirops-operator/mirops) | Deploys the operator + RBAC + reports service. |
 
 ---
@@ -161,8 +162,9 @@ helm install mirops oci://ghcr.io/miropshq/charts/mirops \
 
 ### 1. Create your ClusterMirror
 
-Nothing is mirrored until you create one. Both CRs are **cluster-scoped**, so they have no namespace.
-Name it `default` — the Headlamp plugin opens that one first when there are several:
+Nothing is mirrored until you create one — with `kubectl`, or from the Headlamp plugin with
+**New mirror**. Both CRs are **cluster-scoped**, so they have no namespace. One mirror is usually
+enough; add another for a different scope, report destination or interval:
 
 ```yaml
 apiVersion: mirops.mirops.io/v1
