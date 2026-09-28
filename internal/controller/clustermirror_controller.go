@@ -202,13 +202,13 @@ func (r *ClusterMirrorReconciler) upgradeSummary(ctx context.Context) analysis.M
 func (r *ClusterMirrorReconciler) publishReport(ctx context.Context, cm *miropsv1.ClusterMirror, report *analysis.MirrorReport) (string, error) {
 	var exp exporter.Exporter
 	if isRemote(cm.Spec.Source) {
-		e, err := buildExporter(ctx, r.Client, r.OperatorNamespace, cm.Name, cm.Spec.Source, mirrorReportExt)
+		e, err := buildExporter(ctx, r.Client, r.OperatorNamespace, cm.Name, cm.Spec.Source, reportExt)
 		if err != nil {
 			return "", err
 		}
 		exp = e
 	} else {
-		exp = exporter.NewFileExporter(filepath.Join(r.ReportsDir, localReportName(cm.Name, cm.Spec.Source, mirrorReportExt)))
+		exp = exporter.NewFileExporter(filepath.Join(r.ReportsDir, localReportName(cm.Name, cm.Spec.Source, reportExt)))
 	}
 	return exp.Location(), exporter.Export(exp, report)
 }

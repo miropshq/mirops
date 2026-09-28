@@ -44,13 +44,16 @@ type ReportServer struct {
 }
 
 // ServeHTTP is mounted behind http.StripPrefix("/reports/", …), so r.URL.Path is the bare report
-// file name (e.g. "mirops-test.mirops").
+// file name (e.g. "prod.mirops"). Every report is "<name>.mirops", so ?kind= says whose it is:
+// "ClusterMirror" for a mirror's; absent (or "UpgradeAnalysis") for an analysis's.
 func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(r.URL.Path)
 	if name == "." || name == "/" || name == "" {
 		http.Error(w, "report name required", http.StatusBadRequest)
 		return
 	}
+	crName := strings.TrimSuffix(strings.TrimSuffix(name, reportExt), ".json")
+	mirror := strings.EqualFold(r.URL.Query().Get("kind"), "ClusterMirror")
 
 	// File destination: serve the local copy from disk if it's there.
 	if data, err := os.ReadFile(filepath.Join(s.ReportsDir, name)); err == nil {
@@ -59,32 +62,27 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remote destination: find the (cluster-scoped) resource the report belongs to and read the report
-	// back from its spec.source (s3/blob/pvc). "<name>.mirror" is a ClusterMirror's; anything else is an
-	// UpgradeAnalysis's "<name>.mirops" — a legacy ".json" suffix is tolerated so a client that hasn't
-	// been updated still resolves to the right analysis.
+	// back from its spec.source (s3/blob/pvc) — a ClusterMirror's or an UpgradeAnalysis's, as the request
+	// says. A ".json" suffix is tolerated so a client that hasn't been updated still resolves to
+	// the right analysis.
 	ctx := r.Context()
 	log := logf.FromContext(ctx)
 
-	var (
-		crName string
-		src    miropsv1.SourceConfig
-		ext    string
-	)
-	if mirrorName, ok := strings.CutSuffix(name, mirrorReportExt); ok {
+	var src miropsv1.SourceConfig
+	if mirror {
 		cm := &miropsv1.ClusterMirror{}
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: mirrorName}, cm); err != nil {
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: crName}, cm); err != nil {
 			http.Error(w, "report not found", http.StatusNotFound)
 			return
 		}
-		crName, src, ext = cm.Name, cm.Spec.Source, mirrorReportExt
+		src = cm.Spec.Source
 	} else {
 		ua := &miropsv1.UpgradeAnalysis{}
-		uaName := strings.TrimSuffix(strings.TrimSuffix(name, reportExt), ".json")
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: uaName}, ua); err != nil {
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: crName}, ua); err != nil {
 			http.Error(w, "report not found", http.StatusNotFound)
 			return
 		}
-		crName, src, ext = ua.Name, ua.Spec.Source, reportExt
+		src = ua.Spec.Source
 	}
 
 	// A file destination lives only on the local disk, already checked above: the report isn't written
@@ -94,7 +92,7 @@ func (s *ReportServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src, ext)
+	exp, err := buildExporter(ctx, s.Client, s.OperatorNamespace, crName, src, reportExt)
 	if err != nil {
 		s.writeReadError(w, log, crName, "", err)
 		return

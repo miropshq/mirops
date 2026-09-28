@@ -13,14 +13,13 @@ import (
 	"github.com/miropshq/mirops/internal/exporter"
 )
 
-// Report extensions. A report's name on the reports server is "<CR name><ext>", and so is its object
-// name at a remote destination unless the user sets one. They also keep the two kinds apart: a mirror
-// and an analysis that share a name never overwrite each other, and `*.mirops` / `*.mirror` filter
-// reports from config files sharing a bucket, container or PVC. The content is JSON either way.
-const (
-	reportExt       = ".mirops" // UpgradeAnalysis
-	mirrorReportExt = ".mirror" // ClusterMirror
-)
+// reportExt is every report's extension — a ClusterMirror's and an UpgradeAnalysis's. A report's name on
+// the reports server is "<CR name>.mirops", and so is its object name at a remote destination unless the
+// user sets one; `*.mirops` filters reports from config files sharing a bucket, container or PVC. The
+// content is JSON whose top-level "kind" says which resource wrote it, and a reports-server request says
+// which one it wants with ?kind= (see ReportServer). A mirror and an analysis writing to the same
+// destination need different names.
+const reportExt = ".mirops"
 
 // reportState values recorded on the status of an UpgradeAnalysis or a ClusterMirror.
 const (
