@@ -98,7 +98,7 @@ The report includes the target and cluster versions, decision, blockers, score b
 
 The operator report service serves reports to the Headlamp plugin. For cloud destinations, configure the operator’s identity or Secret; consumers use their own credentials when reading remote report sources directly.
 
-![Operator report destinations and consumers](docs/images/readme-system-flow.svg)
+![Operator report destinations and consumers](docs/images/readme-report-flow.svg)
 
 ## Optional AI and remediation
 
