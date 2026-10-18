@@ -1,202 +1,65 @@
-# mirops — Mirror Operations
+# Mirops Kubernetes operator
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+> **See what breaks before it does.**
 
-> **See what breaks before it does.** mirops keeps a live **logical mirror** of your infrastructure —
-> every component and what depends on what — so you know the blast radius of a failure or a change
-> before it reaches the live system.
+Mirops evaluates Kubernetes upgrade readiness from a collected cluster snapshot. It builds a dependency graph, checks add-on compatibility, reports health and risk signals, and returns a deterministic decision with the reasons behind it.
 
-**mirops is open source (Apache-2.0).** This repository is the **Kubernetes operator** — the first
-implementation of the mirror-operations concept.
+[![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-- **ClusterMirror** — the core, always on. The operator rebuilds a dependency graph of the cluster on
-  an interval and publishes its **current** risk: what is down, pending or lost, everything that
-  depends on it, and where risk sits per namespace. Report: `<name>.mirops`.
-- **UpgradeAnalysis** — opt-in (Helm `upgrade.enabled=true`). Reads the same mirror against a target
-  Kubernetes version — add-on compatibility, removed APIs, drain blockers — and returns a
-  deterministic `SAFE` / `WARNING` / `CRITICAL` verdict. Report: `<name>.mirops`.
+![Mirops operator flow from cluster collection and analysis to reports in Headlamp and the CLI](docs/images/readme-system-flow.svg)
 
----
+## How an analysis works
 
-## The concept
+Create an `UpgradeAnalysis` for a target Kubernetes version. The operator collects cluster state, evaluates health, capacity, stability, compatibility, and drain blockers, then writes a report and status fields for `kubectl` and the consuming tools.
 
-A *mirror* is a reduced, structured model of real infrastructure; *operations* are the analyses you
-run on that model. The idea is provider-agnostic — Kubernetes is the first provider, but the same
-mirror could later model databases, cloud resources, or anything with components and dependencies.
+![Upgrade analysis flow from target version through collection and evaluation to decision and report](docs/images/readme-analysis-flow.svg)
 
-```mermaid
-flowchart LR
-    subgraph Real["Real infrastructure"]
-        K8s["Kubernetes cluster"]
-        Future["DBs / Cloud / … (future)"]
-    end
-    subgraph Mirror["Logical mirror (provider-agnostic)"]
-        G["Components + dependencies graph"]
-        R["Propagated risk"]
-        C["Compatibility"]
-    end
-    subgraph Ops["Operations on the mirror"]
-        B["Blast radius — always on<br/>(ClusterMirror)"]
-        U["Upgrade readiness — opt-in<br/>(UpgradeAnalysis)"]
-        N["Deploy impact — coming next<br/>(mirops scan -f)"]
-    end
-    K8s -->|collector| Mirror
-    Future -.->|future adapter| Mirror
-    Mirror --> Ops
-```
+## What ships
 
-The mirror engine (`internal/graph`) is intentionally **infra-agnostic** — only the Kubernetes
-*adapter* (`build.go`) knows about k8s. A new provider adds its own adapter; the rest is reused.
+- **Kubernetes inventory:** workloads, services, nodes, PVCs, disruption budgets, detected add-ons, and deprecated APIs.
+- **Dependency graph:** models relationships among collected components and propagates risk to dependents.
+- **Upgrade decision:** returns `SAFE`, `WARNING`, `CRITICAL`, or `ERROR`, with `decision.allow` and blocker details.
+- **Compatibility evaluation:** checks detected add-ons against the target Kubernetes version using the embedded matrix or the `mirops-compatibility-matrix` ConfigMap.
+- **Report destinations:** file, Amazon S3, Azure Blob Storage, and PVC.
+- **Optional AI scoring:** can add reasoning and adjust the readiness score; it cannot determine whether an upgrade is blocked.
+- **Approval-based remediation:** optional `RemediationPlan` resources can propose actions for review and execution.
 
----
+## Readiness and decision
 
-## What this operator does
+The score is a 0–100 health gauge. The upgrade gate is the deterministic decision in the report; the score alone never blocks an upgrade.
 
-One operator pod runs both controllers. The ClusterMirror controller always runs; the UpgradeAnalysis
-controller only when the chart sets `upgrade.enabled=true` (env `MIROPS_UPGRADE_ENABLED`). Neither
-resource is created for you — you create a ClusterMirror after installing, like an UpgradeAnalysis:
-with `kubectl`, or from the Headlamp plugin (**Mirops → Cluster Mirror → New mirror**).
+| Dimension | Weight | Signals |
+| --- | ---: | --- |
+| Health | 25 | Pod readiness and restarts. |
+| Capacity | 30 | CPU and memory requests against allocatable capacity. |
+| Stability | 20 | Crash loops, restart trend, and pod changes between runs. |
+| Compatibility | 25 | Add-on compatibility and deprecated API findings. |
 
-```mermaid
-flowchart LR
-    A["Live cluster"] -->|collector, every refresh.interval| M["ClusterMirror<br/>graph + current risk"]
-    M --> R1["name.mirops<br/>file / s3 / blob / pvc"]
-    M --> S1["ClusterMirror .status<br/>(components, atRisk, byNamespace)"]
-    A -->|collector + targetVersion| U["UpgradeAnalysis<br/>(opt-in)"]
-    U --> R2["name.mirops<br/>file / s3 / blob / pvc"]
-    R1 --> C["mirops-cli · Headlamp plugin"]
-    R2 --> C
-```
+The built-in profiles tune thresholds for unstable pods and the score required for `SAFE`:
 
-The mirror report also indexes every UpgradeAnalysis (name, target version, decision, where its report
-is) and says whether upgrade analysis is on, so a consumer learns both from the one report that always
-exists.
+| Profile | Warning above not-ready | Block above not-ready | SAFE score |
+| --- | ---: | ---: | ---: |
+| `production` (default) | 5% | 30% | 90 |
+| `non-production` | 15% | 60% | 85 |
 
----
+Deterministic blockers include incompatible add-ons, lost PVCs, a PodDisruptionBudget that stalls node drain, CPU or memory pressure above 90%, and pods not ready beyond the selected profile’s block threshold. A low score or propagated graph risk alone is not a blocker.
 
-## The mirops ecosystem
+![Readiness score and deterministic upgrade decision are separate outputs](docs/images/readme-readiness-decision.svg)
 
-The operator produces the reports (`<name>.mirops`, for a ClusterMirror and an UpgradeAnalysis alike); these open-source tools consume them. Each lives in its own repo.
+## Install
 
-| Tool | Repository | Role |
-|------|------------|------|
-| **Operator** (this repo) | [github.com/miropshq/mirops](https://github.com/miropshq/mirops) | Builds the mirror, scores, decides, serves the reports. |
-| **CLI** | [github.com/miropshq/mirops-cli](https://github.com/miropshq/mirops-cli) | `mirops scan` — reads the mirror report, shows namespaces' state, and **gates a CI/CD pipeline** on the upgrade verdict. |
-| **Headlamp plugin** | [github.com/miropshq/mirops-headlamp-plugin](https://github.com/miropshq/mirops-headlamp-plugin) · [Artifact Hub](https://artifacthub.io/packages/headlamp/mirops/mirops) | The list of mirrors and a form to create one; the Cluster Mirror page (namespace risk, at-risk components, dependency graph); and the upgrade analyses. |
-| **Helm charts** | [github.com/miropshq/helm-charts](https://github.com/miropshq/helm-charts) (`mirops-operator/`) · [Artifact Hub](https://artifacthub.io/packages/helm/mirops-operator/mirops) | Deploys the operator + RBAC + reports service. |
-
----
-
-## The mirror engine
-
-The engine (`internal/graph`) turns the snapshot into a **directed dependency graph** and propagates
-risk along its edges. Every component gets an intrinsic **base risk**; a dependent then inherits a
-**decayed** share of the highest risk it depends on — so a broken foundation raises the risk of
-everything built on it.
-
-This is what the ClusterMirror computes on every rebuild — the blast radius of whatever is down,
-pending or lost right now. Upgrade analysis runs the same engine and adds one input: add-ons
-incompatible with its target version.
-
-**Base risk** (before propagation):
-
-| Component | Condition | Base risk |
-|-----------|-----------|-----------|
-| Add-on | incompatible with target | **90** |
-| Add-on | unknown compatibility | 40 |
-| Workload | Down / Failed | 70 |
-| Workload | Degraded | 40 |
-| Workload | Scaled to zero | 10 |
-| Infra (node) | NotReady | 60 |
-| Storage (PVC) | Lost | **90** |
-| Storage (PVC) | Pending | 50 |
-| Network / config | — | 0 (inherit only) |
-
-Standalone **pods** with no owning workload (a raw `kubectl run` / Pod manifest) are mirrored too, as
-workload-typed nodes: a not-ready bare pod scores like a Down workload (**70**), so a failing pod that
-no Deployment covers still surfaces in the graph and its namespace risk.
-
-**Propagation**: a dependent inherits `risk × 0.6` (the decay) of what it depends on, taking the
-**highest** path — so a workload behind an incompatible add-on (90) inherits `90 × 0.6 = 54`. A
-component with risk **≥ 50** is flagged **at risk**. Risk is then aggregated **per namespace**
-(highest component risk, component count, at-risk count) and surfaced as `risk.byNamespace`.
-
-Propagated risk is **informational** — it colors the graph and feeds the decision only when it stems
-from a deterministic blocker (an incompatible add-on or a Lost PVC). Diffuse risk never blocks on its
-own; it tells you *where* to look.
-
----
-
-## Installation
-
-### Prerequisites
-
-- A Kubernetes cluster (see [Compatible versions](#compatible-versions))
-- [Helm](https://helm.sh) 3.x and `kubectl`
-- *(optional)* An Anthropic or OpenAI API key for AI-assisted scoring
-
-### Install with Helm
-
-The operator **installs its own CRDs** at startup (embedded in the image), so the chart from the
-[helm-charts](https://github.com/miropshq/helm-charts) repo is all you need:
+The operator defines cluster-scoped `UpgradeAnalysis` and `RemediationPlan` resources. Install their CRDs before creating resources, then install the Helm chart:
 
 ```sh
-# Operator (controller-manager + remediation-manager); upgrade analysis stays off
-helm install mirops oci://ghcr.io/miropshq/charts/mirops \
-  --namespace mirops --create-namespace --version 0.2.0
-
-# ...or with upgrade analysis on
-helm install mirops oci://ghcr.io/miropshq/charts/mirops \
-  --namespace mirops --create-namespace --version 0.2.0 \
-  --set upgrade.enabled=true
+kubectl apply -f config/crd/bases/
+helm install mirops ./mirops-operator \
+  --namespace mirops \
+  --create-namespace
 ```
 
-> Images: `ghcr.io/miropshq/mirops/operator` and `ghcr.io/miropshq/mirops/remediation`.
-> The chart sets `POD_NAMESPACE` so the operator reads its AI Secret, compatibility-matrix ConfigMap
-> and storage credentials from its own namespace (the CRDs are cluster-scoped, so the CRs have no
-> namespace). The chart creates no ClusterMirror or UpgradeAnalysis — see [Usage](#usage).
+For chart values and published release instructions, see the [Helm charts repository](https://github.com/miropshq/helm-charts).
 
----
-
-## Usage
-
-### 1. Create your ClusterMirror
-
-Nothing is mirrored until you create one — with `kubectl`, or from the Headlamp plugin with
-**New mirror**. Both CRs are **cluster-scoped**, so they have no namespace. One mirror is usually
-enough; add another for a different scope, report destination or interval:
-
-```yaml
-apiVersion: mirops.mirops.io/v1
-kind: ClusterMirror
-metadata:
-  name: default
-spec:
-  scope:
-    mode: all                       # all (default) | application (exclude system namespaces)
-  refresh:
-    interval: 5m                    # how often the mirror is rebuilt (default 5m)
-```
-
-```sh
-kubectl apply -f mirror.yaml
-kubectl get clustermirror
-# NAME      COMPONENTS   EDGES   AT RISK   LAST SYNC   AGE
-# default   184          297     3         30s         1h
-kubectl get clustermirror default -o jsonpath='{.status.byNamespace}'
-```
-
-Rebuild it now, without waiting for the interval, with the `mirops.io/refresh` annotation (the Headlamp
-**Refresh now** button does the same):
-
-```sh
-kubectl annotate clustermirror default mirops.io/refresh="$(date +%s)" --overwrite
-```
-
-### 2. Analyse an upgrade (opt-in)
-
-Upgrade analysis needs `upgrade.enabled=true` in the chart; with it off, an UpgradeAnalysis is never
-processed. `UpgradeAnalysis` is **cluster-scoped** too — it analyses the whole cluster:
+## Create an analysis
 
 ```yaml
 apiVersion: mirops.mirops.io/v1
@@ -205,606 +68,67 @@ metadata:
   name: to-1-34
 spec:
   targetVersion: "1.34"
-  scoringProfile: production        # or non-production (more lenient)
+  scoringProfile: production
   scope:
-    mode: application               # all | application (exclude system namespaces)
-    excludeNamespaces: [monitoring]
-  ai:
-    enabled: true
-    provider: anthropic
-    credentialsSecret: mirops-ai    # Secret in the operator namespace
+    mode: application
+    excludeNamespaces:
+      - monitoring
   source:
-    type: file                      # file | s3 | blob | pvc (pvc = in-cluster persistent storage)
+    type: file
 ```
 
 ```sh
 kubectl apply -f analysis.yaml
-kubectl get upgradeanalysis to-1-34          # no -n: cluster-scoped
-kubectl describe upgradeanalysis to-1-34     # decision, score, reason, blockers
+kubectl get upgradeanalysis to-1-34
+kubectl describe upgradeanalysis to-1-34
 ```
 
-Re-run an analysis on demand by bumping the spec or adding the `mirops.io/refresh` annotation.
+Both custom resources are cluster-scoped. Select `scope.mode: all` to include system namespaces or `application` to focus on application namespaces.
 
-### 3. Read it from a pipeline
+## Reports and storage
 
-The [CLI](https://github.com/miropshq/mirops-cli) reads the mirror report, and the upgrade report when
-the upgrade check is on:
+The report includes the target and cluster versions, decision, blockers, score breakdown, health and compatibility findings, workloads, graph, add-on results, and optional AI reasoning.
 
-```sh
-export MIROPS_SOURCE=s3://my-reports/prod/default.mirops
-mirops scan -n payments                       # a namespace's current state (never blocks)
+| Destination | Configuration | Notes |
+| --- | --- | --- |
+| File | `source.type: file`, optional `path` | Default; written in the operator’s reports directory. |
+| Amazon S3 | `source.type: s3` | Configure bucket, region, object key, and optional credentials Secret; IRSA can be used. |
+| Azure Blob | `source.type: blob` | Configure account, container, blob, and optional credentials Secret; Workload Identity can be used. |
+| PVC | `source.type: pvc` | Persistent Kubernetes storage, mounted through chart values. |
 
-MIROPS_UPGRADE=true \
-MIROPS_UPGRADE_SOURCE=s3://my-reports/prod/to-1-34.mirops \
-mirops scan --enforce                         # exit 1 when decision.allow == false (CRITICAL)
-```
+The operator report service serves reports to the Headlamp plugin. For cloud destinations, configure the operator’s identity or Secret; consumers use their own credentials when reading remote report sources directly.
 
----
+![Operator report destinations and consumers](docs/images/readme-report-flow.svg)
 
-## Report destinations
+## Optional AI and remediation
 
-`spec.source.type` selects where the report is written — the same block, with the same fields, on a
-`ClusterMirror` and on an `UpgradeAnalysis`. The mirror rewrites its report on every rebuild, so the
-same URL always holds the latest one. The default (`file`) is written to the pod and served over HTTP
-(`:8084`) — lost when the pod restarts, and missing for a few seconds on a leader change until the
-first rebuild; use a remote destination for a report a pipeline reads. A **remote** destination (`s3` / `blob` / `pvc`) keeps **no local
-replica in the pod** — the operator writes only to the destination and **reads the report back on
-demand** (in memory) to serve it, using its own credentials so the connection never leaves the
-operator (e.g. IRSA for S3, inside AWS).
+AI is off by default. Configure a Kubernetes Secret containing `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, then reference it in `spec.ai.credentialsSecret`. AI blends its score with the deterministic base score (70% base, 30% AI) and can provide reasoning. It cannot block or unblock an upgrade.
 
-| Type | Purpose | Key fields |
-|------|---------|------------|
-| `file` | Local file in the pod (default; ephemeral `emptyDir`), served over HTTP | `path` |
-| `s3` | Amazon S3 — no local replica | `bucket`, `region`, `key`, `credentialsSecret` |
-| `blob` | Azure Blob Storage — no local replica | `accountName`, `containerName`, `blobName`, `credentialsSecret` |
-| `pvc` | PersistentVolumeClaim — in-cluster **persistent** storage (like `file`, but survives pod restarts; no cloud) | `path` (mount dir; report written as `<name>.mirops`) |
+When remediation suggestions are enabled, the operator creates a `RemediationPlan`. Review proposed actions and approve execution through the resource’s approval field. Remediation does not perform an upgrade automatically.
 
-`credentialsSecret` is **optional** — leave it empty to use **IRSA** (S3) or **Workload / Managed
-Identity** (Azure); set it to a Secret in the **operator's** namespace with static keys otherwise.
-The `pvc` volume is mounted by the Helm chart (`reportPVC.enabled=true`).
+## Compatibility matrix
 
-**Report naming.** Every report is **`<name>.mirops`** — a ClusterMirror's and an UpgradeAnalysis's.
-The content is JSON (uploaded as `application/json`) and its top-level `kind` (`ClusterMirror` /
-`UpgradeAnalysis`) says which resource wrote it. For `s3`/`blob`, the object is named exactly as you set
-`key`/`blobName` — you own the name; leave it empty to default to `<name>.mirops`. For `pvc` and the
-local `file` destination, the report is always `<name>.mirops`. The extension keeps reports distinct
-from config files sharing the destination. A mirror and an analysis that write to the same destination
-need different names.
-
-**Reading a report over HTTP.** The reports service (port `8084`) serves `/reports/<name>.mirops`;
-add `?kind=ClusterMirror` for a mirror's report — without it, the name is an UpgradeAnalysis's.
-
-**Failures are surfaced, not hidden.** When the operator can't write to (or read back from) a remote
-destination, it records the outcome on the CR — `status.reportState` (`written` / `failed`),
-`status.reportError` (the message), and `status.reportLocation` — so a storage failure shows in
-`kubectl describe` and the UI instead of only the pod logs (a ClusterMirror also sets
-`status.syncError`). Deleting the CR **never** deletes the report from S3/Blob/PVC — there is no
-cleanup finalizer.
-
----
-
-## Upgrade analysis (opt-in)
-
-When an upgrade is coming, turn on upgrade analysis (Helm `upgrade.enabled=true`) and create an
-`UpgradeAnalysis`. It reads the same mirror against a target Kubernetes version and returns a readiness
-score and a deterministic verdict. Everything below applies only to upgrade analysis; the ClusterMirror
-needs none of it.
-
-How an analysis runs:
-
-```mermaid
-flowchart TD
-    A["Live cluster"] -->|collector| B["ClusterSnapshot"]
-    B --> C["compat.Evaluate<br/>(add-ons vs targetVersion)"]
-    B --> D["analysis.Calculate<br/>(readiness score + base decision)"]
-    B --> E["graph.BuildFromSnapshot + ApplyRisk<br/>(per-component & per-namespace risk)"]
-    C --> F["report"]
-    D --> F
-    E --> F
-    F --> G["AI scoring (optional, gauge only)"]
-    G --> H["analysis.ApplyGraphDecision<br/>(final decision authority)"]
-    H --> I["report .mirops<br/>HTTP :8084 + optional s3 / blob / pvc"]
-    I --> J["mirops-cli (CI gate)"]
-    I --> K["Headlamp plugin (graph UI)"]
-    H --> L["UpgradeAnalysis .status<br/>(decision, score, reason, reportState)"]
-```
-
-- **Logical mirror**: every workload/service/node/PVC/add-on becomes a node; dependencies become
-  edges; risk propagates along them — an add-on incompatible with the target version raises the risk
-  of everything that depends on it.
-- **Condition-driven decision**: the readiness score is a *gauge*; `CRITICAL` comes only from
-  **deterministic facts** — an incompatible add-on, a Lost PVC, a blocking PodDisruptionBudget,
-  CPU/memory exhaustion, or pods-not-ready beyond a profile threshold. Every reason is listed in
-  `decision.blockers`.
-- **AI is a copilot, not the pilot**: when enabled it reasons over a digest of the mirror and nudges
-  the gauge (`SAFE ↔ WARNING`) — it can never block or unblock; the facts govern the gate.
-
-### The readiness score
-
-The score is a **0–100 gauge** of overall cluster health — a thermometer, **not** the gate (see
-[the decision model](#the-decision-model)). It is the sum of four dimensions, each starting at its
-budget and subtracting penalties:
-
-| Dimension | Budget | Measures |
-|-----------|:------:|----------|
-| **Health** | 25 | how many pods are broken *right now* |
-| **Capacity** | 30 | CPU / memory headroom for rescheduling during the drain |
-| **Stability** | 20 | churn and crash-loops over time |
-| **Compatibility** | 25 | deprecated APIs and incompatible add-ons |
-| **Total** | **100** | |
-
-#### Health (25) — proportional
-
-```
-Health = 25 − (notReady/total × 15) − (restarting/total × 10)
-```
-
-Both terms are **ratios**, so Health scales with cluster size (one bad pod out of 1000 is
-negligible; out of 6 it matters) and can never overshoot its budget. A single critical pod that these
-ratios dilute is caught instead by the graph's per-component risk and the decision guard.
-
-#### Capacity (30) — shared budget
-
-```
-Capacity = 30 − (cpuPressure × 15) − (memPressure × 15)
-```
-
-CPU and memory **share** the 30 points (15 each), so a cluster at 50% on both is healthy and scores
-well — the combined penalty can't exceed 30. `pressure = requests / allocatable` (what pods
-*reserve*, which is what the scheduler uses to place rescheduled pods during a node drain). Pressure
-**> 90%** on either **blocks the upgrade** (`CRITICAL`, see below) — but that block is a **verdict**
-decision, not a score override: the number keeps reflecting the pressure proportionally, as a gauge.
-
-#### Stability (20) — partitioned with caps
-
-```
-Stability = 20 − crash(≤10) − restartDelta(≤6) − podDrop(≤4)
-```
-
-Three signals **partition** the 20-point budget, each **capped** at its slice so no single one can
-overshoot:
-
-| Signal | Slice | Meaning |
-|--------|:-----:|---------|
-| **crash-loops** | 10 | fraction of pods crash-looping now (rate ≥ 10/24h) — the strongest signal |
-| **restart trend** | 6 | new restarts since the last run |
-| **pod drop** | 4 | fraction of pods lost since the last run (only drops count — scaling up is healthy activity, not instability → smallest slice) |
-
-Because the caps sum to 20, the combined penalty can never exceed the budget (Stability bottoms at 0,
-not negative), and the first run — which has no baseline — is bounded instead of tanking the score.
-
-#### Compatibility (25) — diminishing
-
-```
-Compatibility = 25 − 25 × (1 − 0.6^(deprecatedApis + 2 × addonIssues))
-```
-
-A **diminishing** penalty: the first compat issue hurts most and each additional one weighs less, so
-the penalty asymptotes to the 25-point budget and **can never overshoot it** — 30 incompatible
-add-ons and 3 both land near 0, without a linear penalty's runaway negatives. An add-on
-incompatibility weighs **2×** a deprecated API.
-
-> **Naming.** This dimension is called `compatibility` (higher = *better*, 25 = clean) — deliberately
-> **not** "risk", to avoid colliding with the mirror's *graph risk* (`risk.byNamespace`, higher =
-> *worse*). The score dimension contributes to readiness, so bigger is healthier; graph risk is a
-> severity, so bigger is worse.
-
-### The decision model
-
-The decision is **condition-driven**, not score-driven. The score is a gauge; the gate comes from
-deterministic facts. The report carries `decision.level` (SAFE / WARNING / CRITICAL), `decision.allow`
-(the CI gate), and `decision.blockers` (every reason it's blocked).
-
-```mermaid
-flowchart TD
-    A["Analysis"] --> B{"Hard blocker?<br/>PDB · CPU/mem >90% ·<br/>pods >block%· incompatible<br/>add-on · Lost PVC"}
-    B -->|yes| C["CRITICAL<br/>allow = false"]
-    B -->|no| D{"Unstable (pods >warn%)<br/>or score < SafeThreshold?"}
-    D -->|yes| E["WARNING<br/>allow = true"]
-    D -->|no| F["SAFE<br/>allow = true"]
-```
-
-| Level | `allow` | When |
-|-------|:-------:|------|
-| **CRITICAL** | `false` | Any deterministic blocker: a PodDisruptionBudget that would stall the drain, CPU/memory > 90%, pods-not-ready beyond the profile's **block** threshold, an **incompatible add-on**, or a **Lost PVC**. Each is listed in `decision.blockers`. |
-| **WARNING** | `true` | Cluster unstable (pods-not-ready beyond the **warn** threshold) **or** total score below the profile's `SafeThreshold`. Attention needed, but not a hard stop. |
-| **SAFE** | `true` | None of the above — ready to upgrade. |
-
-**The score is never overridden**: no blocker forces the total to a fixed value. A PDB that would
-stall the drain, or CPU/memory > 90%, blocks through the **verdict** (`decision.allow = false`), not by
-zeroing the score — so a healthy-looking number can sit beside a blocked verdict, and that's the point
-(see *Verdict vs health*). CPU/memory pressure still lowers the score proportionally via Capacity, and
-a not-ready pod via Health — but a low score alone never blocks; it can only warrant a `WARNING`. Add-on
-and PVC blockers are layered on last by `ApplyGraphDecision`, which sees the full mirror.
-
-### Verdict vs health — two separate axes
-
-The score answers *"how healthy is the cluster?"*; the decision answers *"can I upgrade?"*. They are
-**independent axes**, so a healthy cluster can still be blocked — an incompatible add-on doesn't
-affect how the cluster runs today, but it breaks the upgrade. Consumers (the CLI and the Headlamp
-plugin) present the two separately so a high score never *contradicts* a blocked verdict:
-
-- **Health band** (from the score): `SAFE` (≥ `SafeThreshold`), `FAIR` (60 – below threshold),
-  `AT RISK` (< 60). Health words only — the gauge never says "blocked".
-- **Verdict** (from `decision.level`): `Allowed` (SAFE), `Not recommended` (WARNING), `Blocked`
-  (CRITICAL). This is the semaphore / go-no-go.
-
-| Health band (score) | Verdict (decision) | Presented as | Reachable? |
-|---------------------|--------------------|--------------|:----------:|
-| 🟢 SAFE | 🟢 Allowed | **Upgrade allowed** | ✅ |
-| 🟢 SAFE | 🟡 Not recommended | e.g. score 91, unstable pods | ✅ |
-| 🟢 SAFE | 🔴 Blocked | healthy but a blocker (e.g. a Lost PVC) | ✅ |
-| 🟡 FAIR | 🟢 Allowed | — | ❌ |
-| 🟡 FAIR | 🟡 Not recommended | needs attention | ✅ |
-| 🟡 FAIR | 🔴 Blocked | low score **and** a blocker | ✅ |
-| 🔴 AT RISK | 🟢 Allowed | — | ❌ |
-| 🔴 AT RISK | 🟡 Not recommended | poor health, not blocked | ✅ |
-| 🔴 AT RISK | 🔴 Blocked | poor health **and** a blocker | ✅ |
-
-Two rows are **impossible**: a score below the profile's `SafeThreshold` always trips at least a
-`WARNING` (the `total < SafeThreshold` rule), so a below-threshold band can never pair with an
-`Allowed` verdict. The colour follows the **verdict** (the actionable state); the word leads with the
-**health band** — so "SAFE + Not recommended" reads as *"healthy, but stabilise before upgrading"*,
-not a contradiction.
-
-### Scoring profiles
-
-The same operator can score a production cluster strictly and a staging cluster leniently. Select the
-profile per-analysis with `spec.scoringProfile`.
-
-| Profile | WARNING when pods-not-ready > | CRITICAL when pods-not-ready > | SAFE needs score ≥ |
-|---------|:---:|:---:|:---:|
-| **production** *(default)* | 5% | 30% | 90 |
-| **non-production** | 15% | 60% | 85 |
-
-If `scoringProfile` is empty or unrecognized, the operator **defaults to `production`** — fail-safe
-strict.
-
-### AI scoring (optional)
-
-When `spec.ai.enabled` is true, the operator sends a digest of the mirror to Anthropic or OpenAI and
-blends the AI's score into the gauge **70/30**:
-
-```
-total = base × 0.7 + aiScore × 0.3
-```
-
-The AI can nudge the readiness number and add reasoning, but it **only touches the gauge** — it can
-never block or unblock an upgrade. The deterministic blockers always govern the gate.
-
-Create a Secret in the operator's namespace and reference it from the CR:
-
-```sh
-kubectl create secret generic mirops-ai -n mirops \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
-```
-
-The Secret key must be `ANTHROPIC_API_KEY` (anthropic) or `OPENAI_API_KEY` (openai). Cap the model's
-response length with `spec.ai.maxTokens` (default `2048`, applies to both providers).
-
-### Remediation (optional)
-
-When `spec.ai.remediation.enabled` is true, the AI also proposes fixes for the detected issues and the
-operator creates a cluster-scoped **RemediationPlan** holding them. Nothing runs until you approve it —
-mirops proposes, you decide, the operator executes.
-
-```
-UpgradeAnalysis  (ai.remediation.enabled)
-   │  AI proposes actions
-   ▼
-RemediationPlan  phase: pending-approval   (spec.approved: false)
-   │  you set spec.approved: true
-   ▼
-   running → executes each action → completed | failed   (+ per-action results)
-```
-
-#### Actions
-
-Each proposed action targets one resource and carries a `risk` rating:
-
-| Action             | What it does                                    | Typical risk |
-|--------------------|-------------------------------------------------|--------------|
-| `restart-pod`      | deletes the pod so its controller recreates it  | low          |
-| `delete-pod`       | force-deletes a stuck pod (grace period 0)      | low–medium   |
-| `scale-deployment` | sets a Deployment's replica count               | medium       |
-| `cordon-node`      | marks a node unschedulable (drain prep)         | high         |
-
-#### Risk levels — `spec.ai.remediation.maxRiskLevel`
-
-A ceiling on which proposed actions make it into the plan. Actions **above** the ceiling are dropped.
-
-| Level             | Actions included    |
-|-------------------|---------------------|
-| `low` *(default)* | low only            |
-| `medium`          | low + medium        |
-| `high`            | low + medium + high |
-
-So with `maxRiskLevel: low`, an AI-proposed `cordon-node` (high) is excluded and only low-risk actions
-remain in the plan.
-
-#### Two independent gates
-
-`maxRiskLevel` filters **what is proposed**; approval controls **whether it runs**:
-
-- `spec.approved: true` — required before any action executes (default `false`).
-- `spec.ai.remediation.autoApprove: true` — executes immediately, skipping approval. Off by default; use with care.
-- `spec.actions[].skip: true` — approve the plan but exclude specific actions from execution.
-
-Each executed action records a result (`success` / `failed` / `skipped`) on `status.results`. Today the
-actions are pod- and node-level only — remediation does not upgrade add-ons, edit PDBs, or restore PVCs.
-
-### Add-on compatibility
-
-The compatibility engine (`internal/compat`) ships a vendor-verified matrix (`internal/compat/matrix.yaml`,
-embedded at build time) and accepts a ConfigMap override (`mirops-compatibility-matrix` in the
-operator namespace). It currently covers 18 common add-ons, with rules up to Kubernetes 1.36:
-
-**Istio, cert-manager, ingress-nginx, Traefik, Argo CD, Flux, Prometheus, external-dns,
-metrics-server, cluster-autoscaler, Karpenter, AWS Load Balancer Controller, KEDA, Kyverno,
-Gatekeeper, Calico, Cilium, Longhorn**.
-
-For an incompatible add-on it computes the version you'd need to upgrade *to* (inverse lookup) and
-surfaces it in `decision.blockers` (`incompatible add-on: istio 1.20 (upgrade to 1.22)`). To extend
-or correct the matrix, edit `matrix.yaml` (a PR) or ship a ConfigMap override.
-
-Each operator release **embeds** a specific published matrix snapshot:
-
-| Operator version | Embedded matrix |
-|------------------|-----------------|
-| `0.1.0` | `v2026.09.03` |
-| `0.2.0` | `v2026.09.03` |
-
-**Updating the matrix without a new operator image.** The embedded snapshot is deterministic and
-offline-safe, but you can decouple the matrix from the operator build: the Helm chart's
-`compatMatrix.enabled=true` pulls a chosen version — `latest` or a pinned date tag `vYYYY.MM.DD` —
-from [`mirops-compat`](https://github.com/miropshq/mirops-compat) (OCI) into the
-`mirops-compatibility-matrix` ConfigMap the operator reads. Pin a date in production so the verdict
-stays reproducible; leave it disabled for air-gapped clusters.
-
----
-
-## Custom resources reference
-
-Three cluster-scoped CRDs. You author `ClusterMirror` and `UpgradeAnalysis`; the operator creates
-`RemediationPlan` from an analysis. Everything below works with plain `kubectl` — Headlamp is optional.
-
-### ClusterMirror (input)
-
-```yaml
-apiVersion: mirops.mirops.io/v1
-kind: ClusterMirror
-metadata:
-  name: default                     # cluster-scoped — no namespace
-spec:
-  scope:
-    mode: all                       # all (default) | application (skip system namespaces)
-    excludeNamespaces: []           # extra namespaces to skip
-  refresh:
-    mode: interval                  # the only mode today
-    interval: 5m                    # default 5m
-  source:                           # where <name>.mirops is written (see "Report destinations")
-    type: file                      # file (default) | s3 | blob | pvc
-```
-
-| Field | Type / values | Default | Notes |
-|-------|---------------|---------|-------|
-| `scope.mode` | `all` \| `application` | `all` | `application` excludes system namespaces. |
-| `scope.excludeNamespaces` | `[]string` | — | Extra namespaces to skip. |
-| `refresh.mode` | `interval` | `interval` | A full rebuild on a timer; the only mode today. |
-| `refresh.interval` | duration | `5m` | How often the mirror is rebuilt. A spec change rebuilds it at once. |
-| `source.*` | same as UpgradeAnalysis | `file` | Report destination; the default object name is `<name>.mirops`. |
-
-The operator writes **`status`** (read-only): `components`, `edges`, `atRisk`, `lastSync`,
-`byNamespace[]` (`namespace`, `maxRisk`, `atRisk`), `syncError`, and the report bookkeeping
-(`reportState`, `reportLocation`, `reportError`).
-
-The mirror's `<name>.mirops` report carries `kind: ClusterMirror`, `generatedAt`, `clusterVersion`, a `summary`,
-`atRisk` (each at-risk component with its dependents and where its risk comes from), `risk.byNamespace`,
-the detected `addons`, the `workloads` inventory, live `issues`, the full `graph`, and `upgrade`:
-whether upgrade analysis is on, plus one entry per UpgradeAnalysis (`name`, `targetVersion`,
-`decision`, `score`, `report`, and `location` for s3/blob). It holds only current state — everything
-tied to a target version stays in the upgrade report.
-
-### UpgradeAnalysis (input)
-
-**The simplest form** — `targetVersion` is the only required field; everything else takes its default
-(scoring `production`, scope `all`, source `file`, no AI). This is all you need to get a verdict:
-
-```yaml
-apiVersion: mirops.mirops.io/v1
-kind: UpgradeAnalysis
-metadata:
-  name: to-1-34          # cluster-scoped — no namespace
-spec:
-  targetVersion: "1.34"  # the only required field
-```
-
-```sh
-kubectl apply -f analysis.yaml
-kubectl describe upgradeanalysis to-1-34   # decision, score, reason, blockers
-```
-
-**Every field**, fully annotated — override only what you need:
-
-```yaml
-apiVersion: mirops.mirops.io/v1
-kind: UpgradeAnalysis
-metadata:
-  name: to-1-34                     # cluster-scoped — no namespace
-spec:
-  targetVersion: "1.34"             # REQUIRED — the Kubernetes version to reach
-  scoringProfile: production        # production (strict, default) | non-production (lenient)
-
-  scope:
-    mode: all                       # all (default) | application (skip system namespaces)
-    excludeNamespaces: [monitoring] # extra namespaces to skip
-
-  ai:                               # optional — blends AI into the score (base 70% + AI 30%)
-    enabled: true
-    provider: anthropic             # anthropic | openai
-    model: claude-sonnet-4-6        # optional; provider default otherwise
-    maxTokens: 2048                 # response ceiling, both providers (1–32768, default 2048)
-    credentialsSecret: mirops-ai    # Secret in the operator namespace (ANTHROPIC_API_KEY / OPENAI_API_KEY)
-    remediation:                    # optional — creates a RemediationPlan with AI-proposed fixes
-      enabled: true
-      maxRiskLevel: low             # low (default) | medium | high — ceiling on proposed actions
-      autoApprove: false            # true = execute without manual approval (use with care)
-
-  resync:
-    interval: "30m"                 # re-run automatically on this interval; empty = run once
-
-  source:                           # where the report is written (see "Report destinations")
-    type: file                      # file (default) | s3 | blob | pvc
-    path: ""                        # file: report basename; pvc: directory on the mounted volume
-    # s3:   bucket, region, key, credentialsSecret
-    # blob: accountName, containerName, blobName, credentialsSecret
-```
-
-| Field | Type / values | Default | Notes |
-|-------|---------------|---------|-------|
-| `targetVersion` | string | — | **Required.** Target Kubernetes version, e.g. `"1.34"`. |
-| `scoringProfile` | `production` \| `non-production` | `production` | Strictness of the SAFE bar and block thresholds. |
-| `scope.mode` | `all` \| `application` | `all` | `application` excludes system namespaces. |
-| `scope.excludeNamespaces` | `[]string` | — | Extra namespaces to skip. |
-| `ai.enabled` | bool | `false` | Blend AI into the gauge; never affects the gate. |
-| `ai.provider` | `anthropic` \| `openai` | `anthropic` | AI backend. |
-| `ai.model` | string | provider default | e.g. `claude-sonnet-4-6`, `gpt-4o`. |
-| `ai.maxTokens` | int (1–32768) | `2048` | Max response tokens (both providers). |
-| `ai.credentialsSecret` | string | — | Secret with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. |
-| `ai.remediation.enabled` | bool | `false` | Create a RemediationPlan with proposed fixes. |
-| `ai.remediation.maxRiskLevel` | `low` \| `medium` \| `high` | `low` | Ceiling on proposed actions (see Remediation). |
-| `ai.remediation.autoApprove` | bool | `false` | Execute without manual approval. |
-| `resync.interval` | duration | — (once) | e.g. `"15m"`, `"1h"`. Empty = run once. |
-| `source.type` | `file` \| `s3` \| `blob` \| `pvc` | `file` | Report destination (see table above). |
-
-The operator writes the outcome to **`status`** (read-only): `decision` (`SAFE`/`WARNING`/`CRITICAL`),
-`totalScore`, `reason`, `conditions`, and — when AI ran — `aiScore` / `aiReasoning` / `aiModel`, plus
-report bookkeeping (`reportState`, `reportLocation`, `reportError`). Inspect with `kubectl describe`.
-
-The analysis's `<name>.mirops` report carries `kind: UpgradeAnalysis`, the `decision`, `scores`, add-on
-compatibility, and `upgradeImpact` — for each add-on the target version breaks, every component that
-depends on it. It still carries the `workloads`, `graph` and `risk` it had in 0.1.0, so older
-consumers keep working; for the cluster's current state, read the ClusterMirror report.
-
-#### Report destination variants
-
-The `source` block chooses where the report is written — drop any of these into a spec in place of the
-`file` default. Remote destinations keep no local replica (see [Report destinations](#report-destinations)).
-
-```yaml
-  # Amazon S3 — omit credentialsSecret to use IRSA
-  source:
-    type: s3
-    bucket: my-reports
-    region: us-east-1
-    key: clusters/prod.mirops          # you own the name; empty → <name>.mirops
-    credentialsSecret: aws-creds        # optional (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
-```
-
-```yaml
-  # Azure Blob — omit credentialsSecret to use Workload / Managed Identity
-  source:
-    type: blob
-    accountName: mystorage
-    containerName: reports
-    blobName: prod.mirops               # you own the name; empty → <name>.mirops
-    credentialsSecret: azure-creds      # optional (AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID)
-```
-
-```yaml
-  # PersistentVolumeClaim — in-cluster persistent storage, no cloud (chart: reportPVC.enabled=true)
-  source:
-    type: pvc
-    path: /reports                      # directory on the mounted volume (report → <name>.mirops)
-```
-
-### RemediationPlan (created by the operator)
-
-Emitted only when `ai.remediation.enabled` is true. The operator fills `spec.actions`; **you** set
-`spec.approved: true` to execute. Nothing runs until you do (unless `autoApprove` was set).
-
-```yaml
-apiVersion: mirops.mirops.io/v1
-kind: RemediationPlan
-metadata:
-  name: to-1-34-remediation         # created by the operator; cluster-scoped
-spec:
-  upgradeAnalysisRef: to-1-34       # the analysis that produced this plan
-  approved: false                   # ← set true to execute
-  actions:
-    - id: action-1
-      type: restart-pod             # restart-pod | delete-pod | scale-deployment | cordon-node
-      namespace: default
-      name: crash-test-6cfc7c5c44-lnnvz
-      reason: "CrashLoopBackOff; a restart may clear a transient failure"
-      risk: low                     # low | medium | high
-      skip: false                   # true = keep in the plan but don't execute this one
-    - id: action-2
-      type: scale-deployment
-      namespace: default
-      name: heavy-app
-      reason: "Reduce memory pressure before draining nodes"
-      risk: medium
-      params:
-        replicas: "2"               # type-specific parameters
-```
-
-Approve (or approve everything except one action):
-
-```sh
-# approve the whole plan
-kubectl patch remediationplan to-1-34-remediation --type=merge -p '{"spec":{"approved":true}}'
-
-# ...or skip action-2, then approve
-kubectl patch remediationplan to-1-34-remediation --type=json \
-  -p '[{"op":"replace","path":"/spec/actions/1/skip","value":true}]'
-```
-
-| Field | Type / values | Notes |
-|-------|---------------|-------|
-| `spec.upgradeAnalysisRef` | string | Name of the source `UpgradeAnalysis`. |
-| `spec.approved` | bool | Gate: `true` executes the plan. Default `false`. |
-| `spec.actions[].type` | `restart-pod` \| `delete-pod` \| `scale-deployment` \| `cordon-node` | The operation. |
-| `spec.actions[].risk` | `low` \| `medium` \| `high` | Filtered by `maxRiskLevel` before the plan is built. |
-| `spec.actions[].skip` | bool | Exclude this action even when the plan is approved. |
-| `spec.actions[].params` | map | Type-specific, e.g. `replicas` for `scale-deployment`. |
-
-Each executed action records `status.results[]` (`success` / `failed` / `skipped`); `status.phase`
-moves `pending-approval → running → completed | failed`.
-
----
-
-## Compatible versions
-
-| Component | Version |
-|-----------|---------|
-| Built against | Kubernetes `v0.34` libraries (`client-go`/`api` v0.34.1, `controller-runtime` v0.22.4) |
-| Runs on | Kubernetes **1.31 – 1.34** (recent clusters; older may work but is untested) |
-| Go | 1.24 |
-| Add-on compatibility matrix | 18 common add-ons, rules up to Kubernetes **1.36** |
-
----
+The operator embeds a compatibility snapshot in its image. Administrators may override it with a ConfigMap named `mirops-compatibility-matrix`; the separate [mirops-compat catalog](https://github.com/miropshq/mirops-compat) maintains source rules and published snapshots. Unknown compatibility and known incompatibility are distinct results.
 
 ## Development
 
+Requires Go 1.24.6 or newer.
+
 ```sh
-go build ./... && go test ./internal/...   # build + unit tests
-make manifests                              # regenerate CRDs + RBAC
-make lint                                   # golangci-lint (strict)
-make run                                    # run against ~/.kube/config
+go test ./...
+make manifests
+make lint
+make run
 ```
 
-> **Calibration note.** The scoring weights and thresholds (dimension budgets, the `0.6` decay, the
-> profile percentages) are reasoned defaults, not yet empirically validated against a corpus of real
-> upgrades. Treat the score as directional until a kind/kwok validation harness lands.
+Use the project’s Makefile for other generation and build targets. Keep generated CRDs and code synchronized with API type changes.
 
----
+## Ecosystem and contribution
 
-## Maintainers
+- [Mirops CLI](https://github.com/miropshq/mirops-cli) renders reports and enforces decisions in CI/CD.
+- [Headlamp plugin](https://github.com/miropshq/mirops-headlamp-plugin) visualizes analyses, findings, and remediation plans.
+- [Helm charts](https://github.com/miropshq/helm-charts) package deployment.
+- [Compatibility catalog](https://github.com/miropshq/mirops-compat) maintains add-on support data.
 
-- **Enrique Cruz** — Founder
-- **Mario Flores** — Co-founder
+Mirops is open source under Apache-2.0. See the repository [LICENSE](LICENSE), and contribute a focused pull request that keeps implementation, tests, and documentation aligned.
 
-## License
-
-Open source under the **Apache License 2.0** (Apache-2.0). See [LICENSE](LICENSE).
