@@ -6,35 +6,13 @@ Mirops evaluates Kubernetes upgrade readiness from a collected cluster snapshot.
 
 [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-```mermaid
-flowchart LR
-  K[Kubernetes API] --> C[Collectors]
-  C --> S[Cluster snapshot]
-  S --> G[Dependency graph and risk]
-  S --> A[Upgrade readiness analysis]
-  G --> R[Report]
-  A --> R
-  R --> H[Headlamp plugin]
-  R --> CLI[Mirops CLI and CI]
-```
+![Mirops operator flow from cluster collection and analysis to reports in Headlamp and the CLI](docs/images/readme-system-flow.svg)
 
 ## How an analysis works
 
 Create an `UpgradeAnalysis` for a target Kubernetes version. The operator collects cluster state, evaluates health, capacity, stability, compatibility, and drain blockers, then writes a report and status fields for `kubectl` and the consuming tools.
 
-```mermaid
-flowchart TD
-  U[UpgradeAnalysis] --> C[Collect workloads, nodes, storage, add-ons]
-  C --> G[Build graph and propagate risk]
-  G --> S[Calculate readiness dimensions]
-  S --> D{Deterministic blockers?}
-  D -->|yes| X[CRITICAL · allow false]
-  D -->|no, attention needed| W[WARNING · allow true]
-  D -->|no| OK[SAFE · allow true]
-  X --> R[Report and resource status]
-  W --> R
-  OK --> R
-```
+![Upgrade analysis flow from target version through collection and evaluation to decision and report](docs/images/readme-analysis-flow.svg)
 
 ## What ships
 
@@ -65,6 +43,8 @@ The built-in profiles tune thresholds for unstable pods and the score required f
 | `non-production` | 15% | 60% | 85 |
 
 Deterministic blockers include incompatible add-ons, lost PVCs, a PodDisruptionBudget that stalls node drain, CPU or memory pressure above 90%, and pods not ready beyond the selected profile’s block threshold. A low score or propagated graph risk alone is not a blocker.
+
+![Readiness score and deterministic upgrade decision are separate outputs](docs/images/readme-readiness-decision.svg)
 
 ## Install
 
@@ -117,6 +97,8 @@ The report includes the target and cluster versions, decision, blockers, score b
 | PVC | `source.type: pvc` | Persistent Kubernetes storage, mounted through chart values. |
 
 The operator report service serves reports to the Headlamp plugin. For cloud destinations, configure the operator’s identity or Secret; consumers use their own credentials when reading remote report sources directly.
+
+![Operator report destinations and consumers](docs/images/readme-system-flow.svg)
 
 ## Optional AI and remediation
 
