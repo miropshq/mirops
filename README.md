@@ -148,5 +148,5 @@ Use the project’s Makefile for other generation and build targets. Keep genera
 - [Helm charts](https://github.com/miropshq/helm-charts) package deployment.
 - [Compatibility catalog](https://github.com/miropshq/mirops-compat) maintains add-on support data.
 
-Mirops is open source under Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [LICENSE](LICENSE).
+Mirops is open source under Apache-2.0. See the repository [LICENSE](LICENSE), and contribute a focused pull request that keeps implementation, tests, and documentation aligned.
 
