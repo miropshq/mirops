@@ -4,7 +4,7 @@
 
 Mirops keeps a **live mirror of your Kubernetes cluster** — every workload, Service, volume and add-on, what depends on what, and what is broken right now. When something fails you already know its blast radius, and before you change something you can check what the change would break.
 
-The mirror is a model, not a copy: nothing runs in it. The operator rebuilds it on an interval and publishes it as a report that [Headlamp](https://github.com/miropshq/mirops-headlamp-plugin) shows and the [CLI](https://github.com/miropshq/mirops-cli) checks deploys against. **Upgrade analysis** is an opt-in operation on the same mirror, for when a Kubernetes upgrade is coming.
+The mirror is a model, not a copy: nothing runs in it. The operator rebuilds it on an interval and publishes it as a report that [Headlamp](https://github.com/miropshq/mirops-headlamp-plugin) shows and the [CLI](https://github.com/miropshq/mirops-cli) checks deploys against. **Upgrade analysis** is an opt-in operation on the same model, for when a Kubernetes upgrade is coming.
 
 [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -15,7 +15,7 @@ The mirror is a model, not a copy: nothing runs in it. The operator rebuilds it 
 - **ClusterMirror** — the always-on mirror. A dependency graph of workloads, Services, Ingresses, ConfigMaps and Secrets, PVCs, nodes and add-ons, rebuilt every 5 minutes by default, with the current risk of every component and namespace.
 - **Risk propagation** — whatever is down, pending or lost raises the risk of everything that depends on it, and adds up per namespace.
 - **Reports** — every mirror and analysis writes `<name>.mirops` to a file, Amazon S3, Azure Blob Storage or a PVC, and the operator serves them to Headlamp.
-- **Upgrade analysis (opt-in)** — an `UpgradeAnalysis` reads the mirror against a target Kubernetes version: add-on compatibility, removed APIs, drain blockers, a 0–100 readiness score and a deterministic `SAFE`, `WARNING` or `CRITICAL` verdict.
+- **Upgrade analysis (opt-in)** — an `UpgradeAnalysis` builds the same mirror and evaluates it against a target Kubernetes version: add-on compatibility, removed APIs, drain blockers, a 0–100 readiness score and a deterministic `SAFE`, `WARNING` or `CRITICAL` verdict.
 - **Optional AI and remediation** — for upgrade analysis: AI reasoning that nudges the score, never the verdict, and `RemediationPlan` actions that run only after you approve them.
 
 All three resources — `ClusterMirror`, `UpgradeAnalysis` and `RemediationPlan` — are cluster-scoped.
